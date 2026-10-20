@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 /**
- * Puddly action sidecar — JSONL stdin/stdout protocol v1 (ADR / Step 9).
+ * Puddly action sidecar — JSONL stdin/stdout protocol v2 (ADR-031 / Step 13).
  *
  * Usage:
  *   node --experimental-strip-types tools/puddly-action-sidecar.mjs
- *   # or via IpcActionRunner::node_sidecar(workspace_root)
+ *   # or via IpcActionRunner::node_sidecar / generated `.puddly/generated/action-sidecar.mjs`
  *
  * Env:
  *   PUDDLY_ACTION_SIDECAR — optional override used by the Rust host
  *     (space-separated argv, e.g. "node --experimental-strip-types /abs/path/to/this.mjs")
  *
- * Protocol: one JSON request line on stdin → one JSON response line on stdout.
- * Loads `sourcePath` with dynamic import and calls `export async function run(input, ctx)`.
+ * Protocol v2: one JSON request line per call on stdin → one JSON response line on
+ * stdout, correlated by `id` (string or u64). The process stays alive across lines
+ * until stdin closes (long-lived worker). Oneshot hosts close stdin after one line.
+ *
+ * Frozen error codes (must match Rust `IpcErrorCode`):
+ *   protocol_mismatch, unknown_op, bad_request, not_found,
+ *   import_failed, no_run_export, run_failed, sidecar_not_configured
  */
 
 import { createInterface } from "node:readline";
@@ -20,34 +25,66 @@ import { isAbsolute, resolve } from "node:path";
 import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 
-function respond(obj) {
-  process.stdout.write(JSON.stringify(obj) + "\n");
+/** @type {Readonly<Record<string, string>>} */
+export const IPC_ERROR_CODES = Object.freeze({
+  protocol_mismatch: "protocol_mismatch",
+  unknown_op: "unknown_op",
+  bad_request: "bad_request",
+  not_found: "not_found",
+  import_failed: "import_failed",
+  no_run_export: "no_run_export",
+  run_failed: "run_failed",
+  sidecar_not_configured: "sidecar_not_configured",
+});
+
+/** Incremented on every handled request (proves process reuse in tests). */
+let handledCount = 0;
+
+function respond(id, obj) {
+  process.stdout.write(JSON.stringify({ id, v: PROTOCOL_VERSION, ...obj }) + "\n");
 }
 
-function fail(code, message) {
-  respond({
-    v: PROTOCOL_VERSION,
+function fail(id, code, message) {
+  respond(id ?? 0, {
     ok: false,
     error: { code, message },
   });
 }
 
 async function handle(req) {
+  const id = req.id;
+  if (id === undefined || id === null) {
+    fail(0, IPC_ERROR_CODES.bad_request, "id required");
+    return;
+  }
+
   if (req.v !== PROTOCOL_VERSION) {
     fail(
-      "protocol_mismatch",
+      id,
+      IPC_ERROR_CODES.protocol_mismatch,
       `got v${req.v}, expected v${PROTOCOL_VERSION}`,
     );
     return;
   }
+
+  // Health / reuse probe used by Step 13 tests.
+  if (req.op === "ping") {
+    handledCount += 1;
+    respond(id, {
+      ok: true,
+      data: { pid: process.pid, seq: handledCount },
+    });
+    return;
+  }
+
   if (req.op !== "run") {
-    fail("unknown_op", `unsupported op \`${req.op}\``);
+    fail(id, IPC_ERROR_CODES.unknown_op, `unsupported op \`${req.op}\``);
     return;
   }
   if (!req.sourcePath || typeof req.sourcePath !== "string") {
-    fail("bad_request", "sourcePath required");
+    fail(id, IPC_ERROR_CODES.bad_request, "sourcePath required");
     return;
   }
 
@@ -58,7 +95,7 @@ async function handle(req) {
   try {
     await access(abs, fsConstants.R_OK);
   } catch {
-    fail("not_found", `action file not readable: ${abs}`);
+    fail(id, IPC_ERROR_CODES.not_found, `action file not readable: ${abs}`);
     return;
   }
 
@@ -66,55 +103,58 @@ async function handle(req) {
   try {
     mod = await import(pathToFileURL(abs).href);
   } catch (e) {
-    fail("import_failed", e?.message ?? String(e));
+    fail(id, IPC_ERROR_CODES.import_failed, e?.message ?? String(e));
     return;
   }
 
   if (typeof mod.run !== "function") {
-    fail("no_run_export", `module ${abs} has no export async function run`);
+    fail(
+      id,
+      IPC_ERROR_CODES.no_run_export,
+      `module ${abs} has no export async function run`,
+    );
     return;
   }
 
   const ctx = { user: req.user ?? null };
   try {
     const data = await mod.run(req.input ?? {}, ctx);
-    respond({
-      v: PROTOCOL_VERSION,
+    handledCount += 1;
+    respond(id, {
       ok: true,
       data: data === undefined ? {} : data,
     });
   } catch (e) {
-    fail("run_failed", e?.message ?? String(e));
+    fail(id, IPC_ERROR_CODES.run_failed, e?.message ?? String(e));
   }
 }
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
-let handled = false;
 
-rl.on("line", async (line) => {
-  if (handled) return;
-  handled = true;
-  rl.close();
-  const trimmed = line.trim();
-  if (!trimmed) {
-    fail("bad_request", "empty request line");
-    process.exitCode = 1;
-    return;
-  }
-  let req;
-  try {
-    req = JSON.parse(trimmed);
-  } catch (e) {
-    fail("bad_request", `invalid JSON: ${e?.message ?? e}`);
-    process.exitCode = 1;
-    return;
-  }
-  await handle(req);
+/** Serialize handlers so overlapping readline events stay ordered. */
+let chain = Promise.resolve();
+
+rl.on("line", (line) => {
+  chain = chain.then(async () => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      fail(0, IPC_ERROR_CODES.bad_request, "empty request line");
+      return;
+    }
+    let req;
+    try {
+      req = JSON.parse(trimmed);
+    } catch (e) {
+      fail(0, IPC_ERROR_CODES.bad_request, `invalid JSON: ${e?.message ?? e}`);
+      return;
+    }
+    await handle(req);
+  });
 });
 
 rl.on("close", () => {
-  if (!handled) {
-    fail("bad_request", "no request line on stdin");
-    process.exitCode = 1;
-  }
+  // stdin EOF — exit after in-flight work finishes.
+  chain.finally(() => {
+    process.exitCode = process.exitCode ?? 0;
+  });
 });

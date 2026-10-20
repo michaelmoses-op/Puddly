@@ -2,18 +2,25 @@
 //!
 //! Step 6 loads declared `*.action.ts` sources into an [`ActionCatalog`].
 //! Step 9 executes them via the in-repo Node sidecar (`IpcActionRunner`) over
-//! the frozen JSONL protocol. Step 10 makes [`ActionRunner`] async (ADR-028).
+//! the JSONL protocol. Step 10 makes [`ActionRunner`] async (ADR-028).
+//! Step 13: protocol v2 (`id`), long-lived worker, packaging B, frozen error codes
+//! (ADR-031).
 
 mod error;
+mod error_codes;
 mod ipc;
 mod load;
+mod package;
 
 pub use error::{ActionError, ActionResult};
+pub use error_codes::IpcErrorCode;
 pub use ipc::{
-    find_sidecar_workspace, IpcActionRunner, IpcErrorBody, IpcRequest, IpcResponse, IpcUser,
-    ACTION_SIDECAR_ENV, DEFAULT_SIDECAR_SCRIPT, IPC_PROTOCOL_VERSION,
+    find_generated_sidecar, find_sidecar_workspace, IpcActionRunner, IpcErrorBody, IpcId,
+    IpcRequest, IpcResponse, IpcUser, ACTION_SIDECAR_ENV, ACTION_SIDECAR_ONESHOT_ENV,
+    DEFAULT_SIDECAR_SCRIPT, GENERATED_SIDECAR_SCRIPT, IPC_PROTOCOL_VERSION,
 };
 pub use load::{load_actions, ActionCatalog, LoadedAction};
+pub use package::package_action_sidecar;
 
 use async_trait::async_trait;
 use puddly_ir::AppIr;

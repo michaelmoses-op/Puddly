@@ -7,15 +7,18 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 12** — `puddly dev`: file watcher + hot-swap views/islands, reload
-actions, resource check → draft-migration hint, `/__dev` panel + error overlay sketch
-(ADR-030). Packaging B / long-lived worker deferred to Step 13.
+**Build plan Step 13** — packaging B + long-lived IPC worker (ADR-031): protocol v2
+(`id`), frozen `IpcErrorCode`, `puddly build` → `.puddly/generated/action-sidecar.mjs`,
+long-lived Node worker by default (oneshot via `PUDDLY_ACTION_SIDECAR_ONESHOT=1`).
+Pipeline Steps 1–13 complete after merge.
 
 ## Quick start
 
 ```bash
 cargo run -p puddly-cli -- check examples/todo-slice
 cargo run -p puddly-cli -- explain E0212
+# Package sidecar into gitignored .puddly/generated/:
+cargo run -p puddly-cli -- build examples/todo-slice
 # Dev server (views + /__dev; no Postgres required):
 cargo run -p puddly-cli -- dev examples/todo-slice --bind 127.0.0.1:3000
 # Then: GET /__dev → panel JSON; GET / → SSR with overlay script
@@ -28,15 +31,17 @@ cargo test --workspace
 
 ### Action sidecar
 
-Custom actions run in a short-lived Node process speaking JSONL on stdin/stdout.
+Custom actions run in a **long-lived** Node process speaking JSONL v2 on stdin/stdout
+(correlated by `id`). Set `PUDDLY_ACTION_SIDECAR_ONESHOT=1` for process-per-call.
 
 | How | Detail |
 | --- | --- |
-| Default | `IpcActionRunner::from_env_or_workspace(app_root)` walks up for `tools/puddly-action-sidecar.mjs` |
-| Convenience | `IpcActionRunner::node_sidecar(workspace_root)` |
+| Package | `puddly build` → `.puddly/generated/action-sidecar.mjs` from `tools/` template |
+| Default discovery | env → generated (walk-up) → `tools/puddly-action-sidecar.mjs` (walk-up) |
+| Convenience | `IpcActionRunner::node_sidecar` / `::generated_sidecar` |
 | Env override | `PUDDLY_ACTION_SIDECAR` = space-separated argv |
-| Legacy | `IpcActionRunner::command(program)` / `::argv([...])` |
-| CLI | `puddly serve` / `puddly dev` (with DB) use `RpcServer::from_app_with_sidecar` |
+| Oneshot | `PUDDLY_ACTION_SIDECAR_ONESHOT=1` or `with_oneshot(true)` |
+| CLI | `puddly serve` / `puddly dev` (with DB) use long-lived worker when configured |
 
 Requires Node 22+ (`--experimental-strip-types` for `*.action.ts` imports).
 
@@ -57,7 +62,7 @@ crates/
   puddly-db/           # async Executor + PgPool (tokio-postgres/deadpool) + Recording
   puddly-data/         # compiled statements + closed-vocabulary builder
   puddly-auth/         # email/password, cookie sessions, access rules, auth scaffold
-  puddly-actions/      # load *.action.ts + Node IPC sidecar runner (async via spawn_blocking)
+  puddly-actions/      # load *.action.ts + Node IPC v2 sidecar (long-lived / oneshot)
   puddly-rpc/          # async RPC dispatch (CSRF, auth, CRUD, actions)
   puddly-server/       # async HTTP + SSR GETs + puddly dev (watcher, /__dev, overlay)
   puddly-views/        # *.view.tsx / *.island.tsx discover + Oxc compile + SSR

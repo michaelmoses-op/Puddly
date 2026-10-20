@@ -1,12 +1,13 @@
 //! Step 9: real Node sidecar smoke (JSONL → archive.action.ts).
+//! Updated for protocol v2 (`id`) in Step 13.
 
 use puddly_actions::{
     ActionCall, ActionRunner, IpcActionRunner, IpcRequest, IpcUser, ACTION_SIDECAR_ENV,
 };
 use serde_json::json;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::io::Write;
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -42,7 +43,8 @@ async fn node_sidecar_runs_archive_action() {
         return;
     }
     let root = workspace_root();
-    let mut runner = IpcActionRunner::node_sidecar(&root);
+    // Oneshot keeps Step 9 semantics for this smoke (process-per-call).
+    let mut runner = IpcActionRunner::node_sidecar(&root).with_oneshot(true);
     assert!(runner.is_configured());
 
     let path = archive_path();
@@ -86,6 +88,7 @@ fn ipc_request_includes_user_on_the_wire() {
     let line = IpcRequest::run(&call).encode_line().unwrap();
     assert!(line.contains("\"user\""));
     assert!(line.contains("\"id\":\"u\""));
+    assert!(line.contains("\"v\":2"));
 }
 
 #[test]
@@ -98,7 +101,8 @@ fn direct_node_jsonl_handshake() {
     let script = root.join("tools/puddly-action-sidecar.mjs");
     let path = archive_path();
     let req = json!({
-        "v": 1,
+        "v": 2,
+        "id": "direct-1",
         "op": "run",
         "resource": "todo",
         "action": "archive",
@@ -118,10 +122,16 @@ fn direct_node_jsonl_handshake() {
         writeln!(stdin, "{}", req).unwrap();
     }
     let out = child.wait_with_output().unwrap();
-    assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let line = String::from_utf8_lossy(&out.stdout);
     let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(resp["ok"], true);
+    assert_eq!(resp["v"], 2);
+    assert_eq!(resp["id"], "direct-1");
     assert_eq!(resp["data"]["archived"], "direct-1");
     assert_eq!(resp["data"]["userId"], "u9");
 }
