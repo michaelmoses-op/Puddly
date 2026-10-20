@@ -7,9 +7,9 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 9** — in-repo Node action sidecar (`tools/puddly-action-sidecar.mjs`)
-executes `*.action.ts` over the frozen JSONL IPC protocol; RPC wires
-`RpcContext.user` → sidecar `ctx.user` (ADR-027).
+**Build plan Step 10** — Tokio async cutover: async `Executor` + `deadpool-postgres`
+pool, async RPC/`SessionStore`/`ActionRunner`, concurrent `puddly-server` accept loop
+(ADR-028). Step 9 sidecar IPC protocol unchanged (`spawn_blocking` around sync Command).
 
 ## Quick start
 
@@ -51,13 +51,13 @@ crates/
   puddly-query/        # inspect / impact library
   puddly-schema/       # Postgres schema IR
   puddly-migrate/      # SQL generate / drift check / apply (+ dry-run)
-  puddly-db/           # Executor trait + Postgres + recording drivers
+  puddly-db/           # async Executor + PgPool (tokio-postgres/deadpool) + Recording
   puddly-data/         # compiled statements + closed-vocabulary builder
   puddly-auth/         # email/password, cookie sessions, access rules, auth scaffold
-  puddly-actions/      # load *.action.ts + Node IPC sidecar runner
+  puddly-actions/      # load *.action.ts + Node IPC sidecar runner (async via spawn_blocking)
   tools/               # puddly-action-sidecar.mjs (JSONL action host)
-  puddly-rpc/          # RPC dispatch (CSRF, auth, CRUD, actions)
-  puddly-server/       # sync HTTP adapter (ADR-024)
+  puddly-rpc/          # async RPC dispatch (CSRF, auth, CRUD, actions)
+  puddly-server/       # async HTTP adapter (Tokio TcpListener, ADR-028)
   puddly-cli/          # `puddly` binary
 examples/todo-slice/   # sample app + manifest + migrations
 tests/fixtures/        # invalid fixtures per error code

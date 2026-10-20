@@ -24,3 +24,4 @@ puddly-query = { workspace = true }
 puddly-rpc = { workspace = true }
 puddly-server = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true }

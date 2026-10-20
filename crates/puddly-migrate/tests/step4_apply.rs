@@ -24,13 +24,13 @@ CREATE TABLE \"x\" (\"id\" UUID);\n";
     assert!(body.contains("CREATE TABLE"));
 }
 
-#[test]
-fn apply_migrations_records_ledger_and_sql() {
+#[tokio::test]
+async fn apply_migrations_records_ledger_and_sql() {
     let root = workspace_root().join("examples/todo-slice");
     let mut exec = RecordingExecutor::new();
     // First query: applied_names → empty
     exec.push_canned(vec![]);
-    let result = apply_migrations(&root, &mut exec).unwrap();
+    let result = apply_migrations(&root, &mut exec).await.unwrap();
     assert!(!result.applied.is_empty());
     assert!(result.applied.iter().any(|n| n.contains("0001_init")));
 
@@ -46,13 +46,13 @@ fn apply_migrations_records_ledger_and_sql() {
     }));
 }
 
-#[test]
-fn dry_run_lists_pending_without_executing_bodies() {
+#[tokio::test]
+async fn dry_run_lists_pending_without_executing_bodies() {
     let root = workspace_root().join("examples/todo-slice");
     let mut exec = RecordingExecutor::new();
     // Ledger query → empty (nothing applied yet)
     exec.push_canned(vec![]);
-    let result = apply_migrations_dry_run(&root, &mut exec).unwrap();
+    let result = apply_migrations_dry_run(&root, &mut exec).await.unwrap();
     assert!(result.message.starts_with("dry-run:"));
     assert!(!result.applied.is_empty());
     assert!(result.applied.iter().any(|n| n.contains("0001_init")));
@@ -71,14 +71,14 @@ fn dry_run_lists_pending_without_executing_bodies() {
     }));
 }
 
-#[test]
-fn dry_run_skips_already_applied() {
+#[tokio::test]
+async fn dry_run_skips_already_applied() {
     let root = workspace_root().join("examples/todo-slice");
     let mut exec = RecordingExecutor::new();
     let mut row = puddly_db::DbRow::new();
     row.insert("name", SqlValue::Text("0001_init.sql".into()));
     exec.push_canned(vec![row]);
-    let result = apply_migrations_dry_run(&root, &mut exec).unwrap();
+    let result = apply_migrations_dry_run(&root, &mut exec).await.unwrap();
     assert!(result.skipped.iter().any(|n| n.contains("0001_init")));
     assert!(!result.applied.iter().any(|n| n.contains("0001_init")));
 }

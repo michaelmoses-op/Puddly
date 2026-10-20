@@ -4,6 +4,7 @@ use crate::error::{AuthError, AuthResult};
 use crate::password::{hash_password, verify_password};
 use crate::session::{SessionStore, SESSION_TTL_SECS};
 use crate::user::AuthUser;
+use async_trait::async_trait;
 use puddly_db::{Executor, SqlValue};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -18,10 +19,11 @@ pub struct RegisterInput {
     pub roles: Vec<String>,
 }
 
-pub trait AuthProvider {
-    fn register(&mut self, input: RegisterInput) -> AuthResult<AuthUser>;
-    fn login(&mut self, email: &str, password: &str) -> AuthResult<(AuthUser, String)>;
-    fn logout(&mut self, raw_token: &str) -> AuthResult<()>;
+#[async_trait]
+pub trait AuthProvider: Send {
+    async fn register(&mut self, input: RegisterInput) -> AuthResult<AuthUser>;
+    async fn login(&mut self, email: &str, password: &str) -> AuthResult<(AuthUser, String)>;
+    async fn logout(&mut self, raw_token: &str) -> AuthResult<()>;
 }
 
 /// Built-in email/password provider using `puddly_auth_accounts` + a [`SessionStore`].
@@ -41,8 +43,9 @@ impl<'a, S: SessionStore> EmailPasswordProvider<'a, S> {
     }
 }
 
+#[async_trait]
 impl<S: SessionStore> AuthProvider for EmailPasswordProvider<'_, S> {
-    fn register(&mut self, input: RegisterInput) -> AuthResult<AuthUser> {
+    async fn register(&mut self, input: RegisterInput) -> AuthResult<AuthUser> {
         let email = normalize_email(&input.email);
         if email.is_empty() || input.password.len() < 8 {
             return Err(AuthError::msg(
@@ -56,6 +59,7 @@ impl<S: SessionStore> AuthProvider for EmailPasswordProvider<'_, S> {
                 "SELECT \"id\" FROM \"puddly_auth_accounts\" WHERE \"email\" = $1",
                 &[SqlValue::Text(email.clone())],
             )
+            .await
             .map_err(|e| AuthError::msg(e.to_string()))?;
         if !existing.is_empty() {
             return Err(AuthError::EmailTaken);
@@ -74,6 +78,7 @@ impl<S: SessionStore> AuthProvider for EmailPasswordProvider<'_, S> {
                     SqlValue::Text(roles),
                 ],
             )
+            .await
             .map_err(|e| AuthError::msg(e.to_string()))?;
 
         Ok(AuthUser {
@@ -83,7 +88,7 @@ impl<S: SessionStore> AuthProvider for EmailPasswordProvider<'_, S> {
         })
     }
 
-    fn login(&mut self, email: &str, password: &str) -> AuthResult<(AuthUser, String)> {
+    async fn login(&mut self, email: &str, password: &str) -> AuthResult<(AuthUser, String)> {
         let email = normalize_email(email);
         let rows = self
             .exec
@@ -91,6 +96,7 @@ impl<S: SessionStore> AuthProvider for EmailPasswordProvider<'_, S> {
                 "SELECT \"user_id\", \"email\", \"password_hash\", \"roles\" FROM \"puddly_auth_accounts\" WHERE \"email\" = $1",
                 &[SqlValue::Text(email)],
             )
+            .await
             .map_err(|e| AuthError::msg(e.to_string()))?;
 
         // Constant-time-ish: always verify against a dummy hash if missing,
@@ -134,12 +140,12 @@ impl<S: SessionStore> AuthProvider for EmailPasswordProvider<'_, S> {
             return Err(AuthError::InvalidCredentials);
         }
 
-        let token = self.sessions.create(&user, self.session_ttl_secs)?;
+        let token = self.sessions.create(&user, self.session_ttl_secs).await?;
         Ok((user, token))
     }
 
-    fn logout(&mut self, raw_token: &str) -> AuthResult<()> {
-        self.sessions.delete(raw_token)
+    async fn logout(&mut self, raw_token: &str) -> AuthResult<()> {
+        self.sessions.delete(raw_token).await
     }
 }
 

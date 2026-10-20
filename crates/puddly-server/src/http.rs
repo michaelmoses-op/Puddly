@@ -1,9 +1,9 @@
-//! Minimal HTTP/1.1 request/response helpers (sync, no framework).
+//! Minimal HTTP/1.1 request/response helpers (async I/O, no framework).
 
 use crate::error::{ServerError, ServerResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
@@ -55,12 +55,14 @@ impl HttpResponse {
 }
 
 /// Read one HTTP/1.1 request from `reader` (Content-Length body).
-pub fn parse_http_request(reader: &mut impl Read) -> ServerResult<HttpRequest> {
+pub async fn parse_http_request<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> ServerResult<HttpRequest> {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 1024];
     // Read until header terminator
     loop {
-        let n = reader.read(&mut tmp)?;
+        let n = reader.read(&mut tmp).await?;
         if n == 0 {
             break;
         }
@@ -110,7 +112,7 @@ pub fn parse_http_request(reader: &mut impl Read) -> ServerResult<HttpRequest> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0);
     while rest.len() < content_length {
-        let n = reader.read(&mut tmp)?;
+        let n = reader.read(&mut tmp).await?;
         if n == 0 {
             break;
         }
@@ -126,25 +128,71 @@ pub fn parse_http_request(reader: &mut impl Read) -> ServerResult<HttpRequest> {
     })
 }
 
-/// Parse from a complete byte buffer (tests).
+/// Parse from a complete byte buffer (tests) — sync helper over the same framing.
 pub fn parse_http_request_bytes(raw: &[u8]) -> ServerResult<HttpRequest> {
-    parse_http_request(&mut std::io::Cursor::new(raw))
+    // Reuse framing logic without AsyncRead by parsing headers + body from the buffer.
+    let header_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| ServerError::BadRequest("incomplete headers".into()))?;
+    let header_bytes = &raw[..header_end];
+    let rest = &raw[header_end + 4..];
+
+    let header_str = std::str::from_utf8(header_bytes)
+        .map_err(|_| ServerError::BadRequest("headers not utf-8".into()))?;
+    let mut lines = header_str.split("\r\n");
+    let request_line = lines
+        .next()
+        .ok_or_else(|| ServerError::BadRequest("missing request line".into()))?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts
+        .next()
+        .ok_or_else(|| ServerError::BadRequest("missing method".into()))?
+        .to_string();
+    let path = parts
+        .next()
+        .ok_or_else(|| ServerError::BadRequest("missing path".into()))?
+        .to_string();
+
+    let mut headers = BTreeMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
+        }
+    }
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = rest.to_vec();
+    body.truncate(content_length);
+
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
 }
 
-pub fn write_http_response(writer: &mut impl Write, resp: &HttpResponse) -> ServerResult<()> {
-    write!(
-        writer,
-        "HTTP/1.1 {} {}\r\n",
-        resp.status, resp.reason
-    )?;
+pub async fn write_http_response<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    resp: &HttpResponse,
+) -> ServerResult<()> {
+    let mut head = format!("HTTP/1.1 {} {}\r\n", resp.status, resp.reason);
     for (k, v) in &resp.headers {
-        write!(writer, "{k}: {v}\r\n")?;
+        head.push_str(&format!("{k}: {v}\r\n"));
     }
     for cookie in &resp.set_cookies {
-        write!(writer, "set-cookie: {cookie}\r\n")?;
+        head.push_str(&format!("set-cookie: {cookie}\r\n"));
     }
-    write!(writer, "\r\n")?;
-    writer.write_all(&resp.body)?;
-    writer.flush()?;
+    head.push_str("\r\n");
+    writer.write_all(head.as_bytes()).await?;
+    writer.write_all(&resp.body).await?;
+    writer.flush().await?;
     Ok(())
 }

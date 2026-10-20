@@ -26,11 +26,11 @@ fn load_server() -> RpcServer {
     RpcServer::from_app(&root, check(&root).ir.unwrap()).unwrap()
 }
 
-#[test]
-fn list_ands_body_filter_with_owner_predicate() {
+#[tokio::test]
+async fn list_ands_body_filter_with_owner_predicate() {
     let mut server = load_server();
     let user = puddly_auth::AuthUser::new("owner-1", "o@x.co");
-    let token = server.sessions.create(&user, 3600).unwrap();
+    let token = server.sessions.create(&user, 3600).await.unwrap();
     let mut exec = RecordingExecutor::new();
     exec.push_canned(vec![]);
 
@@ -42,7 +42,7 @@ fn list_ands_body_filter_with_owner_predicate() {
         }),
     )
     .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
 
     let q = exec.log.iter().find(|q| q.sql.contains("SELECT")).unwrap();
@@ -55,11 +55,11 @@ fn list_ands_body_filter_with_owner_predicate() {
     assert_eq!(q.params[2], SqlValue::Int(25));
 }
 
-#[test]
-fn action_access_forbids_non_owner() {
+#[tokio::test]
+async fn action_access_forbids_non_owner() {
     let mut server = load_server();
     let user = puddly_auth::AuthUser::new("me", "me@x.co");
-    let token = server.sessions.create(&user, 3600).unwrap();
+    let token = server.sessions.create(&user, 3600).await.unwrap();
     let mut exec = RecordingExecutor::new();
     let mut row = DbRow::new();
     row.insert("id", SqlValue::Uuid("t1".into()));
@@ -69,7 +69,7 @@ fn action_access_forbids_non_owner() {
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1")
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "forbidden");
 }
@@ -85,8 +85,8 @@ fn archive_action_has_owner_access_in_ir() {
     }
 }
 
-#[test]
-fn ipc_protocol_stub_runner_frames_call() {
+#[tokio::test]
+async fn ipc_protocol_stub_runner_frames_call() {
     let root = todo_slice();
     let ir = check(&root).ir.unwrap();
     let book = statement_book_from_app(&ir);
@@ -94,7 +94,7 @@ fn ipc_protocol_stub_runner_frames_call() {
     let mut sessions = puddly_auth::MemorySessionStore::new();
     let mut runner = IpcActionRunner::stub();
     let user = puddly_auth::AuthUser::new("me", "me@x.co");
-    let token = sessions.create(&user, 3600).unwrap();
+    let token = sessions.create(&user, 3600).await.unwrap();
 
     let mut rt = RpcRuntime {
         ir: &ir,
@@ -113,7 +113,7 @@ fn ipc_protocol_stub_runner_frames_call() {
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1")
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = rt.handle(&req, &mut exec);
+    let resp = rt.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "action");
 

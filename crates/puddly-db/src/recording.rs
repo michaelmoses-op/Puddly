@@ -1,9 +1,10 @@
 use crate::error::{DbError, DbResult};
 use crate::value::{DbRow, SqlValue};
 use crate::Executor;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-/// Records SQL for tests — never touches a network.
+/// Records SQL for tests — never touches a network. Async methods complete immediately.
 #[derive(Debug, Default)]
 pub struct RecordingExecutor {
     pub log: Vec<RecordedQuery>,
@@ -32,8 +33,9 @@ impl RecordingExecutor {
     }
 }
 
+#[async_trait]
 impl Executor for RecordingExecutor {
-    fn execute(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<u64> {
+    async fn execute(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<u64> {
         self.log.push(RecordedQuery {
             kind: "execute".into(),
             sql: sql.to_string(),
@@ -42,7 +44,7 @@ impl Executor for RecordingExecutor {
         Ok(1)
     }
 
-    fn query(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<Vec<DbRow>> {
+    async fn query(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<Vec<DbRow>> {
         self.log.push(RecordedQuery {
             kind: "query".into(),
             sql: sql.to_string(),
@@ -55,7 +57,7 @@ impl Executor for RecordingExecutor {
         }
     }
 
-    fn begin(&mut self) -> DbResult<()> {
+    async fn begin(&mut self) -> DbResult<()> {
         self.log.push(RecordedQuery {
             kind: "begin".into(),
             sql: "BEGIN".into(),
@@ -64,7 +66,7 @@ impl Executor for RecordingExecutor {
         Ok(())
     }
 
-    fn commit(&mut self) -> DbResult<()> {
+    async fn commit(&mut self) -> DbResult<()> {
         self.log.push(RecordedQuery {
             kind: "commit".into(),
             sql: "COMMIT".into(),
@@ -73,7 +75,7 @@ impl Executor for RecordingExecutor {
         Ok(())
     }
 
-    fn rollback(&mut self) -> DbResult<()> {
+    async fn rollback(&mut self) -> DbResult<()> {
         self.log.push(RecordedQuery {
             kind: "rollback".into(),
             sql: "ROLLBACK".into(),

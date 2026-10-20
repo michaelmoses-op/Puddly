@@ -1,11 +1,11 @@
 //! RPC skeleton: `POST /rpc/<resource>.<operation>` (ADR-008).
 //!
-//! Step 6 provides library dispatch (no full HTTP server yet):
 //! - CSRF custom-header check on mutations
 //! - Auth resolver → [`RpcContext`]
 //! - Access-rule enforcement on list/get/create/update/delete
 //! - Built-in `auth.login` / `auth.register` / `auth.logout`
 //! - Custom actions via loaded catalog + pluggable [`ActionRunner`]
+//! - Async dispatch (ADR-028)
 
 mod access_gate;
 mod auth_ops;
@@ -75,7 +75,7 @@ impl RpcServer<MemorySessionStore, IpcActionRunner> {
 }
 
 impl<S: SessionStore, R: ActionRunner> RpcServer<S, R> {
-    pub fn handle(&mut self, req: &RpcRequest, exec: &mut dyn Executor) -> RpcResponse {
+    pub async fn handle(&mut self, req: &RpcRequest, exec: &mut dyn Executor) -> RpcResponse {
         let mut rt = RpcRuntime {
             ir: &self.ir,
             book: &self.book,
@@ -84,6 +84,6 @@ impl<S: SessionStore, R: ActionRunner> RpcServer<S, R> {
             runner: &mut self.runner,
             secure_cookies: self.secure_cookies,
         };
-        rt.handle(req, exec)
+        rt.handle(req, exec).await
     }
 }

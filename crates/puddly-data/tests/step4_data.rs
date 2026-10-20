@@ -56,8 +56,8 @@ fn builder_rejects_non_filterable_and_huge_pages() {
     assert!(matches!(err, puddly_data::DataError::PageTooLarge(_, _)));
 }
 
-#[test]
-fn builder_and_prepared_record_sql() {
+#[tokio::test]
+async fn builder_and_prepared_record_sql() {
     let ir = todo_ir();
     let todo = ir.resources.iter().find(|r| r.name == "todo").unwrap();
     let page = QueryBuilder::for_resource(todo)
@@ -76,13 +76,23 @@ fn builder_and_prepared_record_sql() {
     let book = compile_app_statements(&ir);
     let find = book.get("todo", PreparedKind::FindById).unwrap();
     let mut exec = RecordingExecutor::new();
-    query_prepared(&mut exec, find, &[SqlValue::Uuid("00000000-0000-0000-0000-000000000001".into())])
-        .unwrap();
+    query_prepared(
+        &mut exec,
+        find,
+        &[SqlValue::Uuid(
+            "00000000-0000-0000-0000-000000000001".into(),
+        )],
+    )
+    .await
+    .unwrap();
     exec_prepared(
         &mut exec,
         book.get("todo", PreparedKind::DeleteById).unwrap(),
-        &[SqlValue::Uuid("00000000-0000-0000-0000-000000000001".into())],
+        &[SqlValue::Uuid(
+            "00000000-0000-0000-0000-000000000001".into(),
+        )],
     )
+    .await
     .unwrap();
     assert!(exec.log.iter().any(|q| q.sql.contains("SELECT")));
     assert!(exec.log.iter().any(|q| q.sql.contains("DELETE")));

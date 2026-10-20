@@ -13,6 +13,7 @@ use puddly_data::{query_prepared, PreparedKind, StatementBook};
 use puddly_db::{Executor, SqlValue};
 use puddly_ir::{ActionIr, AppIr, ResourceIr};
 use serde_json::Value;
+
 /// Runtime knobs for one RPC server process / test harness.
 pub struct RpcRuntime<'a, S: SessionStore, R: ActionRunner> {
     pub ir: &'a AppIr,
@@ -25,18 +26,18 @@ pub struct RpcRuntime<'a, S: SessionStore, R: ActionRunner> {
 }
 
 impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
-    pub fn handle(
+    pub async fn handle(
         &mut self,
         req: &RpcRequest,
         exec: &mut dyn Executor,
     ) -> RpcResponse {
-        match self.handle_inner(req, exec) {
+        match self.handle_inner(req, exec).await {
             Ok(resp) => resp,
             Err(e) => map_err(e),
         }
     }
 
-    fn handle_inner(
+    async fn handle_inner(
         &mut self,
         req: &RpcRequest,
         exec: &mut dyn Executor,
@@ -51,10 +52,11 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
                 exec,
                 self.sessions,
                 self.secure_cookies,
-            );
+            )
+            .await;
         }
 
-        let ctx = RpcContext::from_sessions(self.sessions, req.cookie_header_value());
+        let ctx = RpcContext::from_sessions(self.sessions, req.cookie_header_value()).await;
 
         let resource = self
             .ir
@@ -75,7 +77,8 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
                 &ctx,
                 self.book,
                 exec,
-            )?;
+            )
+            .await?;
             return Ok(RpcResponse::ok(data));
         }
 
@@ -85,7 +88,7 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
             .iter()
             .find(|a| a.name == target.operation);
         if let Some(action_ir) = action_ir {
-            enforce_action_access(action_ir, resource, &req.body, &ctx, self.book, exec)?;
+            enforce_action_access(action_ir, resource, &req.body, &ctx, self.book, exec).await?;
             let loaded = self
                 .actions
                 .get(&target.resource, &target.operation)
@@ -95,14 +98,17 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
                         target.resource, target.operation
                     ))
                 })?;
-            let data = self.runner.run(ActionCall {
-                resource: &target.resource,
-                action: &target.operation,
-                input: &req.body,
-                source_path: &loaded.path,
-                source: &loaded.source,
-                user: ctx.user.as_ref().map(auth_user_to_ipc),
-            })?;
+            let data = self
+                .runner
+                .run(ActionCall {
+                    resource: &target.resource,
+                    action: &target.operation,
+                    input: &req.body,
+                    source_path: &loaded.path,
+                    source: &loaded.source,
+                    user: ctx.user.as_ref().map(auth_user_to_ipc),
+                })
+                .await?;
             return Ok(RpcResponse::ok(data));
         }
 
@@ -115,7 +121,7 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
 
 /// When `action.access` is set, enforce it (loading the row by `input.id` for owner/member).
 /// When omitted, require any authenticated user (Step 6 default).
-fn enforce_action_access(
+async fn enforce_action_access(
     action: &ActionIr,
     resource: &ResourceIr,
     body: &Value,
@@ -149,7 +155,8 @@ fn enforce_action_access(
                     .ok_or_else(|| {
                         RpcError::msg(format!("no find statement for {}", resource.name))
                     })?;
-                let rows = query_prepared(exec, stmt, &[SqlValue::Uuid(id.to_string())])?;
+                let rows =
+                    query_prepared(exec, stmt, &[SqlValue::Uuid(id.to_string())]).await?;
                 let row = rows.into_iter().next().ok_or_else(|| {
                     RpcError::NotFound(format!("{} not found", resource.name))
                 })?;

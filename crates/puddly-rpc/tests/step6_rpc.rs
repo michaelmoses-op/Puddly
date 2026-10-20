@@ -38,36 +38,36 @@ fn loads_archive_action_source() {
     assert!(action.path.ends_with("archive.action.ts"));
 }
 
-#[test]
-fn csrf_required_on_create_not_list() {
+#[tokio::test]
+async fn csrf_required_on_create_not_list() {
     let mut server = load_server();
     let mut exec = RecordingExecutor::new();
 
     let list = RpcRequest::new("todo.list", json!({}));
-    let resp = server.handle(&list, &mut exec);
+    let resp = server.handle(&list, &mut exec).await;
     // unauthorized (no session) — but not CSRF
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "unauthorized");
 
     let create = RpcRequest::new("todo.create", json!({"title": "x"}));
-    let resp = server.handle(&create, &mut exec);
+    let resp = server.handle(&create, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "csrf");
 }
 
-#[test]
-fn create_enforces_authenticated() {
+#[tokio::test]
+async fn create_enforces_authenticated() {
     let mut server = load_server();
     let mut exec = RecordingExecutor::new();
     let req = RpcRequest::new("todo.create", json!({"title": "hi"}))
         .with_header(CSRF_HEADER_NAME, "1");
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "unauthorized");
 }
 
-#[test]
-fn get_enforces_owner_against_row() {
+#[tokio::test]
+async fn get_enforces_owner_against_row() {
     let mut server = load_server();
     let mut exec = RecordingExecutor::new();
 
@@ -80,17 +80,17 @@ fn get_enforces_owner_against_row() {
 
     // Establish a session as user "me"
     let user = puddly_auth::AuthUser::new("me", "me@x.co");
-    let token = server.sessions.create(&user, 3600).unwrap();
+    let token = server.sessions.create(&user, 3600).await.unwrap();
 
     let req = RpcRequest::new("todo.get", json!({"id": "t1"}))
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "forbidden");
 }
 
-#[test]
-fn get_allows_owner() {
+#[tokio::test]
+async fn get_allows_owner() {
     let mut server = load_server();
     let mut exec = RecordingExecutor::new();
 
@@ -101,27 +101,27 @@ fn get_allows_owner() {
     exec.push_canned(vec![row]);
 
     let user = puddly_auth::AuthUser::new("me", "me@x.co");
-    let token = server.sessions.create(&user, 3600).unwrap();
+    let token = server.sessions.create(&user, 3600).await.unwrap();
 
     let req = RpcRequest::new("todo.get", json!({"id": "t1"}))
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     assert_eq!(resp.data.as_ref().unwrap()["title"], "ok");
 }
 
-#[test]
-fn custom_action_requires_auth_and_runner() {
+#[tokio::test]
+async fn custom_action_requires_auth_and_runner() {
     let mut server = load_server();
     let mut exec = RecordingExecutor::new();
 
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1");
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     assert_eq!(resp.error.as_ref().unwrap().code, "unauthorized");
 
     let user = puddly_auth::AuthUser::new("me", "me@x.co");
-    let token = server.sessions.create(&user, 3600).unwrap();
+    let token = server.sessions.create(&user, 3600).await.unwrap();
     // owner access loads the row first
     let mut row = DbRow::new();
     row.insert("id", SqlValue::Uuid("t1".into()));
@@ -130,14 +130,14 @@ fn custom_action_requires_auth_and_runner() {
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1")
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     // Stub runner → action error
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "action");
 }
 
-#[test]
-fn native_action_runner_executes_archive() {
+#[tokio::test]
+async fn native_action_runner_executes_archive() {
     let root = todo_slice();
     let ir = check(&root).ir.unwrap();
     let book = statement_book_from_app(&ir);
@@ -149,7 +149,7 @@ fn native_action_runner_executes_archive() {
     });
 
     let user = puddly_auth::AuthUser::new("me", "me@x.co");
-    let token = sessions.create(&user, 3600).unwrap();
+    let token = sessions.create(&user, 3600).await.unwrap();
 
     let mut rt = RpcRuntime {
         ir: &ir,
@@ -167,13 +167,13 @@ fn native_action_runner_executes_archive() {
     let req = RpcRequest::new("todo.archive", json!({"id": "abc"}))
         .with_header(CSRF_HEADER_NAME, "1")
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = rt.handle(&req, &mut exec);
+    let resp = rt.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     assert_eq!(resp.data.unwrap()["archived"], "abc");
 }
 
-#[test]
-fn auth_login_sets_cookie() {
+#[tokio::test]
+async fn auth_login_sets_cookie() {
     let mut server = load_server();
     let mut exec = RecordingExecutor::new();
 
@@ -190,7 +190,7 @@ fn auth_login_sets_cookie() {
         json!({"email": "a@b.co", "password": "password123"}),
     )
     .with_header(CSRF_HEADER_NAME, "1");
-    let resp = server.handle(&req, &mut exec);
+    let resp = server.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     assert!(!resp.set_cookies.is_empty());
     assert!(resp.set_cookies[0].contains(SESSION_COOKIE_NAME));

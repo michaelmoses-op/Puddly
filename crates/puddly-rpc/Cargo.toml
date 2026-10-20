@@ -6,6 +6,7 @@ license.workspace = true
 description = "Puddly RPC skeleton: dispatch, CSRF, auth context, access enforcement"
 
 [dependencies]
+futures = { workspace = true }
 puddly-actions = { workspace = true }
 puddly-auth = { workspace = true }
 puddly-core = { workspace = true }
@@ -18,3 +19,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 puddly-check = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
