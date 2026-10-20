@@ -1,0 +1,19 @@
+[package]
+name = "puddly-views"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Discover, compile, and SSR Puddly *.view.tsx / *.island.tsx (ADR-007 / ADR-029)"
+
+[dependencies]
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_diagnostics = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

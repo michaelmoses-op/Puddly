@@ -19,6 +19,7 @@ use puddly_query::{
 use puddly_actions::ACTION_SIDECAR_ENV;
 use puddly_rpc::RpcServer;
 use puddly_server::{serve, ServerConfig};
+use puddly_views::ViewBundle;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -431,12 +432,19 @@ async fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
+            let views = match ViewBundle::load(&path) {
+                Ok(v) => Arc::new(v),
+                Err(e) => {
+                    eprintln!("error: loading views: {e}");
+                    return ExitCode::from(1);
+                }
+            };
             let config = ServerConfig {
                 bind,
                 root: path,
                 secure_cookies,
             };
-            match serve(&config, Arc::new(Mutex::new(rpc)), pool).await {
+            match serve(&config, Arc::new(Mutex::new(rpc)), pool, views).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("error: {e}");

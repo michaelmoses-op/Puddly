@@ -17,6 +17,7 @@ members = [
     "crates/puddly-actions",
     "crates/puddly-rpc",
     "crates/puddly-server",
+    "crates/puddly-views",
     "crates/puddly-cli",
 ]
 default-members = ["crates/puddly-cli"]
@@ -44,6 +45,7 @@ puddly-auth = { path = "crates/puddly-auth" }
 puddly-actions = { path = "crates/puddly-actions" }
 puddly-rpc = { path = "crates/puddly-rpc" }
 puddly-server = { path = "crates/puddly-server" }
+puddly-views = { path = "crates/puddly-views" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

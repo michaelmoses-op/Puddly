@@ -7,17 +7,18 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 10** — Tokio async cutover: async `Executor` + `deadpool-postgres`
-pool, async RPC/`SessionStore`/`ActionRunner`, concurrent `puddly-server` accept loop
-(ADR-028). Step 9 sidecar IPC protocol unchanged (`spawn_blocking` around sync Command).
+**Build plan Step 11** — Views/islands vertical slice: Oxc TSX → restricted view IR →
+streamed SSR HTML; `*.island.tsx` markers + `tools/puddly-islands.js` (no VDOM)
+(ADR-029). RPC / async pool unchanged from Step 10.
 
 ## Quick start
 
 ```bash
 cargo run -p puddly-cli -- check examples/todo-slice
 cargo run -p puddly-cli -- explain E0212
-# HTTP RPC (needs Postgres + Node 22+ for custom actions):
+# HTTP RPC + SSR views (needs Postgres + Node 22+ for custom actions):
 # DATABASE_URL=postgres://... cargo run -p puddly-cli -- serve examples/todo-slice --bind 127.0.0.1:3000
+# Then: GET / or GET /v/todo → SSR HTML; GET /puddly-islands.js → island runtime
 # Optional sidecar override (space-separated argv):
 # PUDDLY_ACTION_SIDECAR="node --experimental-strip-types $(pwd)/tools/puddly-action-sidecar.mjs"
 cargo test --workspace
@@ -55,11 +56,12 @@ crates/
   puddly-data/         # compiled statements + closed-vocabulary builder
   puddly-auth/         # email/password, cookie sessions, access rules, auth scaffold
   puddly-actions/      # load *.action.ts + Node IPC sidecar runner (async via spawn_blocking)
-  tools/               # puddly-action-sidecar.mjs (JSONL action host)
   puddly-rpc/          # async RPC dispatch (CSRF, auth, CRUD, actions)
-  puddly-server/       # async HTTP adapter (Tokio TcpListener, ADR-028)
+  puddly-server/       # async HTTP adapter (Tokio TcpListener, ADR-028) + SSR GETs
+  puddly-views/        # *.view.tsx / *.island.tsx discover + Oxc compile + SSR
   puddly-cli/          # `puddly` binary
-examples/todo-slice/   # sample app + manifest + migrations
+examples/todo-slice/   # sample app + manifest + migrations + todo view/island
+tools/                 # action sidecar + puddly-islands.js
 tests/fixtures/        # invalid fixtures per error code
 ```
 

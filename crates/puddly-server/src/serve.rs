@@ -7,6 +7,7 @@ use crate::http::{
 use puddly_core::{CSRF_HEADER_NAME, DISPLAY_NAME};
 use puddly_db::{Executor, PgPool};
 use puddly_rpc::{RpcRequest, RpcResponse, RpcServer};
+use puddly_views::{demo_todo_props, render_page, ViewBundle, ISLANDS_RUNTIME_JS};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,12 +31,14 @@ impl Default for ServerConfig {
     }
 }
 
-/// Async accept loop. Check out a pool connection per request (no executor mutex).
-/// `RpcServer` remains behind a mutex for in-memory session state.
+/// Async accept loop. Check out a pool connection per RPC request (no executor mutex).
+/// View / health / island-runtime GETs skip the pool. `RpcServer` remains behind a mutex
+/// for in-memory session state.
 pub async fn serve<S, R>(
     config: &ServerConfig,
     rpc: Arc<Mutex<RpcServer<S, R>>>,
     pool: PgPool,
+    views: Arc<ViewBundle>,
 ) -> ServerResult<()>
 where
     S: puddly_auth::SessionStore + Send + 'static,
@@ -50,8 +53,9 @@ where
         let (stream, _) = listener.accept().await?;
         let rpc = Arc::clone(&rpc);
         let pool = pool.clone();
+        let views = Arc::clone(&views);
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(stream, &rpc, &pool).await {
+            if let Err(e) = handle_stream(stream, &rpc, &pool, &views).await {
                 eprintln!("request error: {e}");
             }
         });
@@ -63,13 +67,14 @@ pub async fn serve_once<S, R>(
     stream: &mut TcpStream,
     rpc: &Mutex<RpcServer<S, R>>,
     exec: &mut dyn Executor,
+    views: Option<&ViewBundle>,
 ) -> ServerResult<()>
 where
     S: puddly_auth::SessionStore,
     R: puddly_actions::ActionRunner,
 {
     let http_req = parse_http_request(stream).await?;
-    let http_resp = dispatch_http(&http_req, rpc, exec).await?;
+    let http_resp = dispatch_http(&http_req, rpc, exec, views).await?;
     write_http_response(stream, &http_resp).await
 }
 
@@ -77,17 +82,16 @@ async fn handle_stream<S, R>(
     mut stream: TcpStream,
     rpc: &Mutex<RpcServer<S, R>>,
     pool: &PgPool,
+    views: &ViewBundle,
 ) -> ServerResult<()>
 where
     S: puddly_auth::SessionStore,
     R: puddly_actions::ActionRunner,
 {
     let http_req = parse_http_request(&mut stream).await?;
-    // Health checks skip pool checkout.
-    if http_req.method.eq_ignore_ascii_case("GET")
-        && (http_req.path == "/health" || http_req.path == "/healthz")
-    {
-        let http_resp = HttpResponse::json(200, "OK", &json!({ "ok": true }));
+
+    // Health / views / island runtime never touch Postgres.
+    if let Some(http_resp) = try_dispatch_get(&http_req, Some(views))? {
         return write_http_response(&mut stream, &http_resp).await;
     }
 
@@ -95,32 +99,65 @@ where
         .get()
         .await
         .map_err(|e| ServerError::msg(e.to_string()))?;
-    let http_resp = dispatch_http(&http_req, rpc, &mut exec).await?;
+    let http_resp = dispatch_http(&http_req, rpc, &mut exec, Some(views)).await?;
     write_http_response(&mut stream, &http_resp).await
+}
+
+/// Handle GET routes that do not need an [`Executor`]. Returns `None` if the request
+/// should fall through to RPC (POST) dispatch.
+pub fn try_dispatch_get(
+    http_req: &HttpRequest,
+    views: Option<&ViewBundle>,
+) -> ServerResult<Option<HttpResponse>> {
+    if !http_req.method.eq_ignore_ascii_case("GET") {
+        return Ok(None);
+    }
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+
+    if path == "/health" || path == "/healthz" {
+        return Ok(Some(HttpResponse::json(200, "OK", &json!({ "ok": true }))));
+    }
+    if path == "/puddly-islands.js" {
+        return Ok(Some(HttpResponse::js(200, "OK", ISLANDS_RUNTIME_JS)));
+    }
+    if let Some(bundle) = views {
+        if path == "/" {
+            let name = bundle.default_view_name().unwrap_or("todo");
+            return Ok(Some(render_view_response(bundle, name)?));
+        }
+        if let Some(name) = path.strip_prefix("/v/") {
+            if !name.is_empty() && !name.contains('/') {
+                return Ok(Some(render_view_response(bundle, name)?));
+            }
+        }
+    }
+    // Unknown GET
+    Ok(Some(HttpResponse::text(404, "Not Found", "not found")))
 }
 
 /// Async dispatch used by the accept loop and unit tests.
 /// Caller supplies an already-checked-out (or in-memory) [`Executor`].
+/// `views` enables SSR routes (`GET /`, `GET /v/<name>`, island runtime).
 pub async fn dispatch_http<S, R>(
     http_req: &HttpRequest,
     rpc: &Mutex<RpcServer<S, R>>,
     exec: &mut dyn Executor,
+    views: Option<&ViewBundle>,
 ) -> ServerResult<HttpResponse>
 where
     S: puddly_auth::SessionStore,
     R: puddly_actions::ActionRunner,
 {
-    if http_req.method.eq_ignore_ascii_case("GET")
-        && (http_req.path == "/health" || http_req.path == "/healthz")
-    {
-        return Ok(HttpResponse::json(200, "OK", &json!({ "ok": true })));
+    if let Some(resp) = try_dispatch_get(http_req, views)? {
+        return Ok(resp);
     }
 
     if !http_req.method.eq_ignore_ascii_case("POST") {
         return Ok(HttpResponse::text(405, "Method Not Allowed", "POST only for RPC"));
     }
 
-    let target = extract_rpc_target(&http_req.path).ok_or_else(|| {
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+    let target = extract_rpc_target(path).ok_or_else(|| {
         ServerError::BadRequest(format!(
             "expected path /rpc/<resource>.<operation>, got {}",
             http_req.path
@@ -141,7 +178,6 @@ where
     if let Some(cookie) = http_req.headers.get("cookie") {
         rpc_req.cookie_header = Some(cookie.clone());
     }
-    // Convenience: if CSRF header missing but present under canonical name, already in map.
     let _ = CSRF_HEADER_NAME;
 
     let rpc_resp = {
@@ -150,6 +186,19 @@ where
     };
 
     Ok(rpc_to_http(rpc_resp))
+}
+
+fn render_view_response(bundle: &ViewBundle, name: &str) -> ServerResult<HttpResponse> {
+    let props = demo_todo_props();
+    match render_page(bundle, name, &props) {
+        Ok(html) => Ok(HttpResponse::html(200, "OK", html)),
+        Err(puddly_views::ViewError::UnknownView { name }) => Ok(HttpResponse::text(
+            404,
+            "Not Found",
+            format!("unknown view `{name}`"),
+        )),
+        Err(e) => Err(ServerError::msg(e.to_string())),
+    }
 }
 
 fn extract_rpc_target(path: &str) -> Option<String> {
