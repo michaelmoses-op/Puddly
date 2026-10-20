@@ -1,0 +1,344 @@
+---
+source: crates/mochi-check/tests/step1.rs
+expression: "serde_json::to_string_pretty(&slim).unwrap()"
+---
+{
+  "resources": [
+    {
+      "access": [
+        {
+          "name": "create",
+          "rule": "authenticated"
+        },
+        {
+          "name": "delete",
+          "rule": "owner:owner"
+        },
+        {
+          "name": "list",
+          "rule": "owner:owner"
+        },
+        {
+          "name": "update",
+          "rule": "owner:owner"
+        }
+      ],
+      "actions": [],
+      "constraints": [],
+      "export_name": "Project",
+      "fields": [
+        {
+          "kind": "id",
+          "name": "id",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "text",
+          "name": "title",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": 200,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": {
+            "ref": {
+              "target": "user"
+            }
+          },
+          "name": "owner",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "timestamp",
+          "name": "createdAt",
+          "options": {
+            "auto": true,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": true
+          }
+        }
+      ],
+      "name": "project",
+      "path": "<WORKSPACE>/examples/todo-slice/features/projects/project.resource.ts"
+    },
+    {
+      "access": [
+        {
+          "name": "create",
+          "rule": "authenticated"
+        },
+        {
+          "name": "delete",
+          "rule": "owner:owner"
+        },
+        {
+          "name": "list",
+          "rule": "owner:owner"
+        },
+        {
+          "name": "update",
+          "rule": "owner:owner"
+        }
+      ],
+      "actions": [
+        {
+          "input": [
+            "id"
+          ],
+          "name": "archive",
+          "run": "./archive.action.ts"
+        }
+      ],
+      "constraints": [
+        {
+          "limit": {
+            "max": 10,
+            "per": "owner",
+            "span": {
+              "end": 533,
+              "start": 477
+            },
+            "where_fields": [
+              [
+                "done",
+                {
+                  "type": "bool",
+                  "value": false
+                }
+              ]
+            ]
+          }
+        }
+      ],
+      "export_name": "Todo",
+      "fields": [
+        {
+          "kind": "id",
+          "name": "id",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "text",
+          "name": "title",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": 200,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "bool",
+          "name": "done",
+          "options": {
+            "auto": null,
+            "default": {
+              "type": "bool",
+              "value": false
+            },
+            "filterable": true,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "date",
+          "name": "dueDate",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": true,
+            "max": null,
+            "optional": true,
+            "renamedFrom": null,
+            "sortable": true
+          }
+        },
+        {
+          "kind": {
+            "ref": {
+              "target": "project"
+            }
+          },
+          "name": "project",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": {
+            "ref": {
+              "target": "user"
+            }
+          },
+          "name": "owner",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "timestamp",
+          "name": "createdAt",
+          "options": {
+            "auto": true,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": true
+          }
+        },
+        {
+          "kind": {
+            "computed": {
+              "source": "(() => /* computed */)"
+            }
+          },
+          "name": "isOverdue",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        }
+      ],
+      "name": "todo",
+      "path": "<WORKSPACE>/examples/todo-slice/features/todos/todo.resource.ts"
+    },
+    {
+      "access": [
+        {
+          "name": "create",
+          "rule": "authenticated"
+        },
+        {
+          "name": "delete",
+          "rule": "owner:id"
+        },
+        {
+          "name": "list",
+          "rule": "authenticated"
+        },
+        {
+          "name": "update",
+          "rule": "owner:id"
+        }
+      ],
+      "actions": [],
+      "constraints": [],
+      "export_name": "User",
+      "fields": [
+        {
+          "kind": "id",
+          "name": "id",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "text",
+          "name": "email",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": true,
+            "max": 320,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "text",
+          "name": "name",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": 120,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "timestamp",
+          "name": "createdAt",
+          "options": {
+            "auto": true,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": true
+          }
+        }
+      ],
+      "name": "user",
+      "path": "<WORKSPACE>/examples/todo-slice/features/users/user.resource.ts"
+    }
+  ]
+}
