@@ -1118,6 +1118,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddly-actions"
+version = "0.1.0"
+dependencies = [
+ "puddly-check",
+ "puddly-ir",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "puddly-auth"
 version = "0.1.0"
 dependencies = [
@@ -1260,6 +1271,22 @@ dependencies = [
  "puddly-manifest",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "puddly-rpc"
+version = "0.1.0"
+dependencies = [
+ "puddly-actions",
+ "puddly-auth",
+ "puddly-check",
+ "puddly-core",
+ "puddly-data",
+ "puddly-db",
+ "puddly-ir",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

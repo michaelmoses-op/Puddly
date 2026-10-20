@@ -19,3 +19,7 @@ pub const MIGRATIONS_DIR: &str = "migrations";
 
 /// Default session cookie name for server-side sessions.
 pub const SESSION_COOKIE_NAME: &str = "puddly_session";
+
+/// CSRF custom header required on mutating RPC calls (ADR-008 / Step 6).
+/// Presence of a non-empty value is enough for the header-check defense.
+pub const CSRF_HEADER_NAME: &str = "x-puddly-csrf";

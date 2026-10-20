@@ -46,3 +46,6 @@ CREATE TABLE IF NOT EXISTS "puddly_sessions" (
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 "#;
+
+mod scaffold;
+pub use scaffold::{scaffold_auth_migration, ScaffoldResult};
