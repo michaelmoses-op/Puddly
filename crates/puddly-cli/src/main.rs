@@ -7,6 +7,9 @@ use puddly_diagnostics::explain_text;
 use puddly_manifest::{
     build_manifest, stale_message, stale_status, write_manifest, StaleStatus,
 };
+use puddly_migrate::{
+    drift_message, drift_status, generate_migration, DriftStatus,
+};
 use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
 };
@@ -61,6 +64,11 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Generate or verify committed SQL migrations
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -71,6 +79,25 @@ enum ManifestCmd {
         path: PathBuf,
     },
     /// Fail if the committed manifest is missing or stale (for CI)
+    Check {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MigrateCmd {
+    /// Generate `migrations/*.sql` from the current schema IR
+    Generate {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Allow DROP TABLE / DROP COLUMN in generated SQL
+        #[arg(long)]
+        allow_destructive: bool,
+    },
+    /// Fail if migrations are missing or the schema fingerprint drifted (CI)
     Check {
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -188,6 +215,60 @@ fn main() -> ExitCode {
                 Err(code) => code,
             }
         }
+        Commands::Migrate { command } => match command {
+            MigrateCmd::Generate {
+                path,
+                allow_destructive,
+            } => {
+                let result = check(&path);
+                if !result.ok {
+                    print_out(&format_check(&result, false));
+                    return ExitCode::from(1);
+                }
+                let ir = result.ir.expect("ok implies ir");
+                match generate_migration(&path, &ir, allow_destructive) {
+                    Ok(gen) => {
+                        for w in &gen.warnings {
+                            eprintln!("warning: {w}");
+                        }
+                        println!("{DISPLAY_NAME} migrate: {}", gen.message);
+                        if gen.message.contains("refusing") {
+                            ExitCode::from(1)
+                        } else {
+                            ExitCode::SUCCESS
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        ExitCode::from(1)
+                    }
+                }
+            }
+            MigrateCmd::Check { path, json } => {
+                let result = check(&path);
+                if !result.ok {
+                    print_out(&format_check(&result, json));
+                    return ExitCode::from(1);
+                }
+                let ir = result.ir.expect("ok implies ir");
+                let status = drift_status(&path, &ir);
+                if json {
+                    let body = serde_json::json!({
+                        "ok": matches!(status, DriftStatus::Fresh),
+                        "status": match &status {
+                            DriftStatus::Fresh => "fresh",
+                            DriftStatus::Missing => "missing",
+                            DriftStatus::Drift { .. } => "drift",
+                        },
+                        "message": drift_message(&status),
+                    });
+                    print_out(&format!("{}\n", serde_json::to_string_pretty(&body).unwrap()));
+                } else {
+                    println!("{}", drift_message(&status));
+                }
+                exit_bool(matches!(status, DriftStatus::Fresh))
+            }
+        },
     }
 }
 

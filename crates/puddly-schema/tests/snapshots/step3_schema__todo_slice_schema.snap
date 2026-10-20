@@ -1,0 +1,178 @@
+---
+source: crates/puddly-schema/tests/step3_schema.rs
+expression: "serde_json::to_string_pretty(&a).unwrap()"
+---
+{
+  "version": 1,
+  "dialect": "postgres",
+  "tables": [
+    {
+      "name": "project",
+      "columns": [
+        {
+          "name": "id",
+          "sqlType": "UUID",
+          "notNull": true,
+          "defaultSql": "gen_random_uuid()"
+        },
+        {
+          "name": "title",
+          "sqlType": "VARCHAR(200)",
+          "notNull": true
+        },
+        {
+          "name": "owner",
+          "sqlType": "UUID",
+          "notNull": true
+        },
+        {
+          "name": "createdAt",
+          "sqlType": "TIMESTAMPTZ",
+          "notNull": true,
+          "defaultSql": "now()"
+        }
+      ],
+      "primaryKey": "id",
+      "foreignKeys": [
+        {
+          "column": "owner",
+          "referencesTable": "user",
+          "referencesColumn": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_project_createdAt",
+          "columns": [
+            "createdAt"
+          ],
+          "unique": false
+        }
+      ]
+    },
+    {
+      "name": "todo",
+      "columns": [
+        {
+          "name": "id",
+          "sqlType": "UUID",
+          "notNull": true,
+          "defaultSql": "gen_random_uuid()"
+        },
+        {
+          "name": "title",
+          "sqlType": "VARCHAR(200)",
+          "notNull": true
+        },
+        {
+          "name": "done",
+          "sqlType": "BOOLEAN",
+          "notNull": true,
+          "defaultSql": "false"
+        },
+        {
+          "name": "dueDate",
+          "sqlType": "DATE",
+          "notNull": false
+        },
+        {
+          "name": "project",
+          "sqlType": "UUID",
+          "notNull": true
+        },
+        {
+          "name": "owner",
+          "sqlType": "UUID",
+          "notNull": true
+        },
+        {
+          "name": "createdAt",
+          "sqlType": "TIMESTAMPTZ",
+          "notNull": true,
+          "defaultSql": "now()"
+        }
+      ],
+      "primaryKey": "id",
+      "foreignKeys": [
+        {
+          "column": "owner",
+          "referencesTable": "user",
+          "referencesColumn": "id"
+        },
+        {
+          "column": "project",
+          "referencesTable": "project",
+          "referencesColumn": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_todo_createdAt",
+          "columns": [
+            "createdAt"
+          ],
+          "unique": false
+        },
+        {
+          "name": "idx_todo_done",
+          "columns": [
+            "done"
+          ],
+          "unique": false
+        },
+        {
+          "name": "idx_todo_dueDate",
+          "columns": [
+            "dueDate"
+          ],
+          "unique": false
+        }
+      ]
+    },
+    {
+      "name": "user",
+      "columns": [
+        {
+          "name": "id",
+          "sqlType": "UUID",
+          "notNull": true,
+          "defaultSql": "gen_random_uuid()"
+        },
+        {
+          "name": "email",
+          "sqlType": "VARCHAR(320)",
+          "notNull": true
+        },
+        {
+          "name": "name",
+          "sqlType": "VARCHAR(120)",
+          "notNull": true
+        },
+        {
+          "name": "createdAt",
+          "sqlType": "TIMESTAMPTZ",
+          "notNull": true,
+          "defaultSql": "now()"
+        }
+      ],
+      "primaryKey": "id",
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "name": "idx_user_createdAt",
+          "columns": [
+            "createdAt"
+          ],
+          "unique": false
+        },
+        {
+          "name": "idx_user_email",
+          "columns": [
+            "email"
+          ],
+          "unique": false
+        }
+      ]
+    }
+  ]
+}

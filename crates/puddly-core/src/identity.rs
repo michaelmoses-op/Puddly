@@ -13,3 +13,6 @@ pub const MANIFEST_DIR: &str = ".puddly";
 
 /// Committed manifest file name inside [`MANIFEST_DIR`].
 pub const MANIFEST_FILE: &str = "manifest.json";
+
+/// Directory (under an app root) for committed SQL migration files.
+pub const MIGRATIONS_DIR: &str = "migrations";

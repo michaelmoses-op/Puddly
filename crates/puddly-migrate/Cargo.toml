@@ -1,0 +1,17 @@
+[package]
+name = "puddly-migrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQL migration generation and drift check for Puddly"
+
+[dependencies]
+puddly-core = { workspace = true }
+puddly-ir = { workspace = true }
+puddly-schema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+puddly-check = { workspace = true }
+insta = { workspace = true }
