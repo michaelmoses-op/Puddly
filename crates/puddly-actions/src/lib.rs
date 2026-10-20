@@ -1,8 +1,8 @@
 //! Action-file loading for the RPC layer (ADR-002 / ADR-016).
 //!
 //! Step 6 loads declared `*.action.ts` sources into an [`ActionCatalog`].
-//! Execution of TypeScript bodies is pluggable via [`ActionRunner`] — the default
-//! is a stub until a JS runtime or codegen lands.
+//! Step 9 executes them via the in-repo Node sidecar (`IpcActionRunner`) over
+//! the frozen JSONL protocol.
 
 mod error;
 mod ipc;
@@ -10,7 +10,8 @@ mod load;
 
 pub use error::{ActionError, ActionResult};
 pub use ipc::{
-    IpcActionRunner, IpcErrorBody, IpcRequest, IpcResponse, IpcUser, IPC_PROTOCOL_VERSION,
+    find_sidecar_workspace, IpcActionRunner, IpcErrorBody, IpcRequest, IpcResponse, IpcUser,
+    ACTION_SIDECAR_ENV, DEFAULT_SIDECAR_SCRIPT, IPC_PROTOCOL_VERSION,
 };
 pub use load::{load_actions, ActionCatalog, LoadedAction};
 
@@ -29,6 +30,8 @@ pub struct ActionCall<'a> {
     pub source_path: &'a Path,
     /// Full TypeScript source (for runners that interpret or compile it).
     pub source: &'a str,
+    /// Authenticated user from RPC context (wired for IPC → sidecar `ctx.user`).
+    pub user: Option<IpcUser>,
 }
 
 /// Pluggable executor for custom actions.

@@ -1,23 +1,29 @@
-//! Action IPC protocol stub (Step 8 / Step 7 open question 3.5 B).
+//! Action IPC JSONL protocol + Node sidecar runner (Steps 8–9).
 //!
-//! Frozen **JSON Lines** handshake for a future Node/Bun sidecar:
+//! Protocol:
 //! - Host writes one request line to the sidecar stdin.
 //! - Sidecar writes one response line to stdout.
 //!
-//! Full TypeScript execution is not required yet; [`IpcActionRunner`] frames
-//! calls through these types and either returns a stub error or talks to a
-//! configured process.
+//! In-repo sidecar: `tools/puddly-action-sidecar.mjs` (Node 22+ with
+//! `--experimental-strip-types` so `*.action.ts` can be imported).
 
 use crate::error::{ActionError, ActionResult};
 use crate::{ActionCall, ActionRunner};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Protocol version — bump when the JSON shape changes incompatibly.
 pub const IPC_PROTOCOL_VERSION: u32 = 1;
+
+/// Env var: space-separated argv for the sidecar process.
+/// Example: `node --experimental-strip-types /path/to/tools/puddly-action-sidecar.mjs`
+pub const ACTION_SIDECAR_ENV: &str = "PUDDLY_ACTION_SIDECAR";
+
+/// Relative path of the in-repo sidecar script (from workspace / app root).
+pub const DEFAULT_SIDECAR_SCRIPT: &str = "tools/puddly-action-sidecar.mjs";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -63,7 +69,7 @@ pub struct IpcResponse {
 }
 
 impl IpcRequest {
-    pub fn run(call: &ActionCall<'_>, user: Option<IpcUser>) -> Self {
+    pub fn run(call: &ActionCall<'_>) -> Self {
         Self {
             v: IPC_PROTOCOL_VERSION,
             op: "run".into(),
@@ -72,7 +78,7 @@ impl IpcRequest {
             input: call.input.clone(),
             source_path: call.source_path.display().to_string(),
             source: Some(call.source.to_string()),
-            user,
+            user: call.user.clone(),
         }
     }
 
@@ -131,54 +137,109 @@ impl IpcResponse {
     }
 }
 
-/// Runner that speaks the IPC protocol.
+/// Runner that speaks the IPC protocol via an argv (typically `node … sidecar.mjs`).
 ///
-/// - [`IpcActionRunner::stub`]: no process — returns a framed `sidecar_not_configured` error.
-/// - [`IpcActionRunner::command`]: spawn `program` per call (stdin/stdout JSONL).
+/// - [`IpcActionRunner::stub`]: no process — returns `sidecar_not_configured`.
+/// - [`IpcActionRunner::argv`]: spawn `argv[0]` with the remaining args per call.
+/// - [`IpcActionRunner::node_sidecar`]: convenience for the in-repo script.
+/// - [`IpcActionRunner::from_env`]: parse [`ACTION_SIDECAR_ENV`], else stub.
 #[derive(Debug, Clone)]
 pub struct IpcActionRunner {
-    program: Option<PathBuf>,
-    pub user: Option<IpcUser>,
+    argv: Option<Vec<String>>,
 }
 
 impl IpcActionRunner {
     pub fn stub() -> Self {
+        Self { argv: None }
+    }
+
+    /// Full argv, e.g. `["node", "--experimental-strip-types", "/abs/sidecar.mjs"]`.
+    pub fn argv(parts: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        let argv: Vec<String> = parts.into_iter().map(Into::into).collect();
         Self {
-            program: None,
-            user: None,
+            argv: if argv.is_empty() { None } else { Some(argv) },
         }
     }
 
+    /// Legacy helper: single program path with no args.
     pub fn command(program: impl Into<PathBuf>) -> Self {
-        Self {
-            program: Some(program.into()),
-            user: None,
+        Self::argv([program.into().display().to_string()])
+    }
+
+    /// In-repo Node sidecar under `root/tools/puddly-action-sidecar.mjs`.
+    pub fn node_sidecar(root: &Path) -> Self {
+        let script = root.join(DEFAULT_SIDECAR_SCRIPT);
+        Self::argv([
+            "node".into(),
+            "--experimental-strip-types".into(),
+            script.display().to_string(),
+        ])
+    }
+
+    /// Prefer `$PUDDLY_ACTION_SIDECAR` (shell-style words); else stub.
+    pub fn from_env() -> Self {
+        match std::env::var(ACTION_SIDECAR_ENV) {
+            Ok(s) if !s.trim().is_empty() => {
+                let parts: Vec<String> = shell_words(&s);
+                Self::argv(parts)
+            }
+            _ => Self::stub(),
         }
     }
 
-    pub fn with_user(mut self, user: IpcUser) -> Self {
-        self.user = Some(user);
-        self
+    /// `$PUDDLY_ACTION_SIDECAR` if set, otherwise [`node_sidecar`] when the script
+    /// is found at `root` or an ancestor (so `serve examples/todo-slice` still
+    /// picks up the monorepo `tools/puddly-action-sidecar.mjs`).
+    pub fn from_env_or_workspace(root: &Path) -> Self {
+        if std::env::var(ACTION_SIDECAR_ENV)
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return Self::from_env();
+        }
+        match find_sidecar_workspace(root) {
+            Some(ws) => Self::node_sidecar(&ws),
+            None => Self::stub(),
+        }
+    }
+
+    pub fn is_configured(&self) -> bool {
+        self.argv.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
+    }
+}
+
+/// Walk `start` and parents for a directory containing [`DEFAULT_SIDECAR_SCRIPT`].
+pub fn find_sidecar_workspace(start: &Path) -> Option<PathBuf> {
+    let mut cur = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if cur.join(DEFAULT_SIDECAR_SCRIPT).is_file() {
+            return Some(cur);
+        }
+        if !cur.pop() {
+            return None;
+        }
     }
 }
 
 impl ActionRunner for IpcActionRunner {
     fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
-        let req = IpcRequest::run(&call, self.user.clone());
+        // Prefer per-call user from RpcContext (wired in dispatch).
+        let req = IpcRequest::run(&call);
         let line = req.encode_line()?;
 
-        let Some(program) = &self.program else {
-            // Protocol seam exercised; sidecar binary not required for Step 8 stub.
-            let resp = IpcResponse::err(
+        let Some(argv) = &self.argv else {
+            let _ = IpcResponse::err(
                 "sidecar_not_configured",
                 format!(
-                    "IPC protocol v{IPC_PROTOCOL_VERSION} ready; no sidecar for `{}.{}` ({})",
-                    call.resource,
-                    call.action,
-                    call.source_path.display()
+                    "IPC protocol v{IPC_PROTOCOL_VERSION} ready; set {ACTION_SIDECAR_ENV} or use IpcActionRunner::node_sidecar for `{}.{}`",
+                    call.resource, call.action
                 ),
-            );
-            let _framed = resp.encode_line()?;
+            )
+            .encode_line()?;
             return Err(ActionError::NotExecutable {
                 resource: call.resource.to_string(),
                 action: call.action.to_string(),
@@ -186,12 +247,17 @@ impl ActionRunner for IpcActionRunner {
             });
         };
 
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| ActionError::msg("ipc argv empty"))?;
+
         let mut child = Command::new(program)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| ActionError::msg(format!("ipc spawn {}: {e}", program.display())))?;
+            .map_err(|e| ActionError::msg(format!("ipc spawn `{program}`: {e}")))?;
 
         {
             let mut stdin = child
@@ -201,6 +267,7 @@ impl ActionRunner for IpcActionRunner {
             stdin
                 .write_all(line.as_bytes())
                 .map_err(|e| ActionError::msg(format!("ipc write: {e}")))?;
+            // Drop stdin so the sidecar sees EOF after one line.
         }
 
         let stdout = child
@@ -212,12 +279,21 @@ impl ActionRunner for IpcActionRunner {
         reader
             .read_line(&mut out_line)
             .map_err(|e| ActionError::msg(format!("ipc read: {e}")))?;
+
+        let stderr = child.stderr.take().map(|err| {
+            let mut s = String::new();
+            let mut r = BufReader::new(err);
+            let _ = r.read_line(&mut s);
+            s
+        });
+
         let status = child
             .wait()
             .map_err(|e| ActionError::msg(format!("ipc wait: {e}")))?;
         if !status.success() {
+            let err_hint = stderr.unwrap_or_default();
             return Err(ActionError::msg(format!(
-                "ipc sidecar exited with {status}"
+                "ipc sidecar exited with {status}: {err_hint}"
             )));
         }
 
@@ -234,6 +310,11 @@ impl ActionRunner for IpcActionRunner {
     }
 }
 
+/// Minimal whitespace splitter (no quotes) for `PUDDLY_ACTION_SIDECAR`.
+fn shell_words(s: &str) -> Vec<String> {
+    s.split_whitespace().map(str::to_string).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,8 +328,14 @@ mod tests {
             input: &json!({"id": "1"}),
             source_path: Path::new("./archive.action.ts"),
             source: "export async function run() {}",
+            user: Some(IpcUser {
+                id: "u1".into(),
+                email: "a@b.co".into(),
+                roles: vec![],
+            }),
         };
-        let req = IpcRequest::run(&call, None);
+        let req = IpcRequest::run(&call);
+        assert_eq!(req.user.as_ref().unwrap().id, "u1");
         let line = req.encode_line().unwrap();
         assert!(line.ends_with('\n'));
         assert_eq!(line.matches('\n').count(), 1);

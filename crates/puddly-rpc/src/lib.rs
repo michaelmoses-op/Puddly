@@ -24,7 +24,9 @@ pub use dispatch::RpcRuntime;
 pub use error::{RpcError, RpcResult};
 pub use request::{RpcErrorBody, RpcRequest, RpcResponse, RpcTarget};
 
-use puddly_actions::{catalog_from_app, ActionCatalog, ActionRunner, StubActionRunner};
+use puddly_actions::{
+    catalog_from_app, ActionCatalog, ActionRunner, IpcActionRunner, StubActionRunner,
+};
 use puddly_auth::{MemorySessionStore, SessionStore};
 use puddly_data::{statement_book_from_app, StatementBook};
 use puddly_db::Executor;
@@ -51,6 +53,22 @@ impl RpcServer<MemorySessionStore, StubActionRunner> {
             actions,
             sessions: MemorySessionStore::new(),
             runner: StubActionRunner,
+            secure_cookies: false,
+        })
+    }
+}
+
+impl RpcServer<MemorySessionStore, IpcActionRunner> {
+    /// Load IR/actions and use the in-repo Node sidecar (or `$PUDDLY_ACTION_SIDECAR`).
+    pub fn from_app_with_sidecar(root: &Path, ir: AppIr) -> Result<Self, String> {
+        let book = statement_book_from_app(&ir);
+        let actions = catalog_from_app(root, &ir).map_err(|e| e.to_string())?;
+        Ok(Self {
+            ir,
+            book,
+            actions,
+            sessions: MemorySessionStore::new(),
+            runner: IpcActionRunner::from_env_or_workspace(root),
             secure_cookies: false,
         })
     }

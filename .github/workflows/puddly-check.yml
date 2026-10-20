@@ -14,6 +14,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.99.1"
+      # Step 9 sidecar smoke needs Node 22+ (`--experimental-strip-types`).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Validate resources
         run: cargo run -p puddly-cli -- check examples/todo-slice
       - name: Fail on stale committed manifest

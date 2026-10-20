@@ -126,8 +126,9 @@ fn ipc_protocol_stub_runner_frames_call() {
         input: &json!({"id": "t1"}),
         source_path: &loaded.path,
         source: &loaded.source,
+        user: None,
     };
-    let line = IpcRequest::run(&call, None).encode_line().unwrap();
+    let line = IpcRequest::run(&call).encode_line().unwrap();
     assert!(line.contains("\"op\":\"run\""));
     let ok = IpcResponse::ok_data(json!({"ok": true})).encode_line().unwrap();
     assert!(IpcResponse::decode_line(&ok).unwrap().ok);
