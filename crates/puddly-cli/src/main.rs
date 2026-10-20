@@ -9,7 +9,8 @@ use puddly_manifest::{
 };
 use puddly_db::PostgresExecutor;
 use puddly_migrate::{
-    apply_migrations, drift_message, drift_status, generate_migration, DriftStatus,
+    apply_migrations, apply_migrations_dry_run, drift_message, drift_status, generate_migration,
+    DriftStatus,
 };
 use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
@@ -112,6 +113,9 @@ enum MigrateCmd {
         /// Postgres URL (defaults to $DATABASE_URL)
         #[arg(long)]
         database_url: Option<String>,
+        /// List pending migrations without executing SQL or writing the ledger
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -277,7 +281,11 @@ fn main() -> ExitCode {
                 }
                 exit_bool(matches!(status, DriftStatus::Fresh))
             }
-            MigrateCmd::Apply { path, database_url } => {
+            MigrateCmd::Apply {
+                path,
+                database_url,
+                dry_run,
+            } => {
                 let url = database_url
                     .or_else(|| std::env::var("DATABASE_URL").ok())
                     .filter(|s| !s.is_empty());
@@ -301,19 +309,33 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
                 match PostgresExecutor::connect(&url) {
-                    Ok(mut exec) => match apply_migrations(&path, &mut exec) {
-                        Ok(r) => {
-                            println!("{DISPLAY_NAME} migrate apply: {}", r.message);
-                            for name in &r.applied {
-                                println!("  applied {name}");
+                    Ok(mut exec) => {
+                        let outcome = if dry_run {
+                            apply_migrations_dry_run(&path, &mut exec)
+                        } else {
+                            apply_migrations(&path, &mut exec)
+                        };
+                        match outcome {
+                            Ok(r) => {
+                                println!("{DISPLAY_NAME} migrate apply: {}", r.message);
+                                for name in &r.applied {
+                                    if dry_run {
+                                        println!("  would apply {name}");
+                                    } else {
+                                        println!("  applied {name}");
+                                    }
+                                }
+                                for name in &r.skipped {
+                                    println!("  skipped {name}");
+                                }
+                                ExitCode::SUCCESS
                             }
-                            ExitCode::SUCCESS
+                            Err(e) => {
+                                eprintln!("error: {e}");
+                                ExitCode::from(1)
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("error: {e}");
-                            ExitCode::from(1)
-                        }
-                    },
+                    }
                     Err(e) => {
                         eprintln!("error: {e}");
                         ExitCode::from(1)

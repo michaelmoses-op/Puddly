@@ -14,7 +14,10 @@ use puddly_ir::AppIr;
 use puddly_schema::{schema_fingerprint, schema_from_app, SchemaIr, SCHEMA_VERSION};
 use std::path::{Path, PathBuf};
 
-pub use apply::{apply_migrations, ensure_migrations_table, sql_body_for_apply, ApplyResult, MIGRATIONS_TABLE};
+pub use apply::{
+    apply_migrations, apply_migrations_dry_run, ensure_migrations_table, sql_body_for_apply,
+    ApplyResult, MIGRATIONS_TABLE,
+};
 pub use diff::{diff_schemas, DestructiveChange, SchemaDiff};
 pub use render::render_schema_sql;
 pub use store::{

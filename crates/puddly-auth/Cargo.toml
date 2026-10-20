@@ -1,0 +1,24 @@
+[package]
+name = "puddly-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Puddly auth: email/password, cookie sessions, access rules"
+
+[dependencies]
+puddly-core = { workspace = true }
+puddly-db = { workspace = true }
+puddly-ir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+subtle = { workspace = true }
+
+[dev-dependencies]
+puddly-db = { workspace = true }
