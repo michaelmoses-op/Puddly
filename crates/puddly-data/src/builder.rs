@@ -82,12 +82,14 @@ pub struct QueryBuilder {
     filterable: BTreeSet<String>,
     sortable: BTreeSet<String>,
     known_fields: BTreeSet<String>,
+    /// Ref field name → target resource (for `include` validation / batching).
+    ref_fields: std::collections::BTreeMap<String, String>,
     filters: Vec<Filter>,
     order: Vec<Order>,
     limit: Option<u32>,
     cursor: Option<SqlValue>,
     max_page_size: u32,
-    /// `include` names recorded for later join planning (Step 4 records only).
+    /// Relation field names to batch-fetch after list (ADR-037; not JOINed).
     includes: Vec<String>,
 }
 
@@ -96,6 +98,7 @@ impl QueryBuilder {
         let mut filterable = BTreeSet::new();
         let mut sortable = BTreeSet::new();
         let mut known = BTreeSet::new();
+        let mut ref_fields = std::collections::BTreeMap::new();
         let mut select = Vec::new();
         for f in &r.fields {
             if matches!(f.kind, FieldKind::Computed { .. }) {
@@ -109,6 +112,9 @@ impl QueryBuilder {
             if f.options.sortable == Some(true) {
                 sortable.insert(f.name.clone());
             }
+            if let FieldKind::Ref { target } = &f.kind {
+                ref_fields.insert(f.name.clone(), target.clone());
+            }
         }
         // id always filterable for cursor / eq
         filterable.insert("id".into());
@@ -121,6 +127,7 @@ impl QueryBuilder {
             filterable,
             sortable,
             known_fields: known,
+            ref_fields,
             filters: Vec::new(),
             order: Vec::new(),
             limit: None,
@@ -197,13 +204,30 @@ impl QueryBuilder {
         self
     }
 
-    /// Record an include; join SQL is deferred (N+1 prevention later).
+    /// Record a ref field to batch-fetch after list (ADR-037 — no JOIN).
     pub fn include(mut self, relation: &str) -> DataResult<Self> {
-        if !self.known_fields.contains(relation) {
+        if !self.ref_fields.contains_key(relation) {
+            if self.known_fields.contains(relation) {
+                return Err(DataError::msg(format!(
+                    "`{relation}` is not a ref field; `include` only accepts relations"
+                )));
+            }
             return Err(DataError::UnknownField(relation.into()));
         }
-        self.includes.push(relation.into());
+        if !self.includes.iter().any(|i| i == relation) {
+            self.includes.push(relation.into());
+        }
         Ok(self)
+    }
+
+    /// Relation names recorded via [`Self::include`].
+    pub fn includes(&self) -> &[String] {
+        &self.includes
+    }
+
+    /// Target resource for a ref field, if any.
+    pub fn ref_target(&self, field: &str) -> Option<&str> {
+        self.ref_fields.get(field).map(|s| s.as_str())
     }
 
     fn push_filter(&mut self, field: &str, op: FilterOp, value: SqlValue) -> DataResult<()> {
@@ -301,9 +325,10 @@ impl QueryBuilder {
         let lim_idx = params.len();
         sql.push_str(&format!(" LIMIT ${lim_idx}"));
 
-        // includes are intentional no-ops for SQL in Step 4 (recorded for later)
+        // includes are applied post-list via batch fetch (ADR-037), not in this SQL
         let _ = self.includes;
         let _ = self.resource;
+        let _ = self.ref_fields;
 
         Ok(Page {
             sql,

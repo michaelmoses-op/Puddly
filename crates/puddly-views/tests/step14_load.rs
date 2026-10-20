@@ -32,7 +32,10 @@ fn parses_load_from_todo_view() {
         .find(|e| e.key == "todos")
         .unwrap();
     match &todos.source {
-        LoadSource::List { resource } => assert_eq!(resource, "todo"),
+        LoadSource::List { resource, include } => {
+            assert_eq!(resource, "todo");
+            assert_eq!(include, &vec!["project".to_string()]);
+        }
         other => panic!("expected list, got {other:?}"),
     }
 

@@ -47,12 +47,15 @@ where
             LoadSource::Value { value } => {
                 props.insert(entry.key.clone(), value.clone());
             }
-            LoadSource::List { resource } => {
+            LoadSource::List { resource, include } => {
                 let rpc = rpc.as_deref_mut().expect("needs_db checked");
                 let exec = exec.as_deref_mut().expect("needs_db checked");
-                match run_crud(rpc, exec, &format!("{resource}.list"), json!({}), cookie_header)
-                    .await
-                {
+                let body = if include.is_empty() {
+                    json!({})
+                } else {
+                    json!({ "include": include })
+                };
+                match run_crud(rpc, exec, &format!("{resource}.list"), body, cookie_header).await {
                     Ok(data) => {
                         props.insert(entry.key.clone(), data);
                     }
