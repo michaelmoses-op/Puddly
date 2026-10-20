@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mochi-core",
+    "crates/mochi-diagnostics",
+    "crates/mochi-ir",
+    "crates/mochi-parse",
+    "crates/mochi-validate",
+    "crates/mochi-check",
+    "crates/mochi-cli",
+]
+default-members = ["crates/mochi-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/newFrame/newFrame"
+
+[workspace.dependencies]
+mochi-core = { path = "crates/mochi-core" }
+mochi-diagnostics = { path = "crates/mochi-diagnostics" }
+mochi-ir = { path = "crates/mochi-ir" }
+mochi-parse = { path = "crates/mochi-parse" }
+mochi-validate = { path = "crates/mochi-validate" }
+mochi-check = { path = "crates/mochi-check" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+similar = "2"
+insta = { version = "1", features = ["json", "yaml"] }
+
+# Oxc — pin matching versions (ADR-019)
+oxc_allocator = "=0.154.0"
+oxc_ast = "=0.154.0"
+oxc_parser = "=0.154.0"
+oxc_span = "=0.154.0"
+oxc_diagnostics = "=0.154.0"

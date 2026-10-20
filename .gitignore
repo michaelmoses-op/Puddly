@@ -1,0 +1,12 @@
+# Design docs are local source of truth; not committed
+docs/
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Generated framework output (commit only migrations/ and .mochi/manifest.json later)
+.mochi/cache/
+.mochi/generated/
+**/node_modules/
+.DS_Store
