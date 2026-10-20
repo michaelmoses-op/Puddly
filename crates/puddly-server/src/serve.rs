@@ -5,12 +5,15 @@ use crate::error::{ServerError, ServerResult};
 use crate::http::{
     parse_http_request, write_http_response, HttpRequest, HttpResponse,
 };
+use crate::view_load::{
+    resolve_load, resolve_static_load, unauthorized_html, unavailable_html, LoadOutcome,
+};
 use puddly_actions::ActionRunner;
 use puddly_auth::SessionStore;
 use puddly_core::{CSRF_HEADER_NAME, DISPLAY_NAME};
 use puddly_db::{Executor, PgPool};
 use puddly_rpc::{RpcRequest, RpcResponse, RpcServer};
-use puddly_views::{demo_todo_props, render_page, ViewBundle, ISLANDS_RUNTIME_JS};
+use puddly_views::{render_page, ViewBundle, ISLANDS_RUNTIME_JS};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,8 +37,8 @@ impl Default for ServerConfig {
     }
 }
 
-/// Async accept loop. Check out a pool connection per RPC request (no executor mutex).
-/// View / health / island-runtime GETs skip the pool. `RpcServer` remains behind a mutex
+/// Async accept loop. Check out a pool connection per RPC / view-load request.
+/// Health / island-runtime GETs skip the pool. `RpcServer` remains behind a mutex
 /// for in-memory session state.
 pub async fn serve<S, R>(
     config: &ServerConfig,
@@ -125,8 +128,33 @@ where
 {
     let http_req = parse_http_request(&mut stream).await?;
 
-    // Health / views / island runtime never touch Postgres.
-    if let Some(http_resp) = try_dispatch_get(&http_req, Some(views))? {
+    if let Some(http_resp) = try_dispatch_static_get(&http_req)? {
+        return write_http_response(&mut stream, &http_resp).await;
+    }
+
+    if let Some(view_name) = view_route_name(&http_req, Some(views)) {
+        let needs_db = views
+            .views
+            .get(&view_name)
+            .map(|m| m.load.needs_db())
+            .unwrap_or(false);
+        let http_resp = if needs_db {
+            let mut exec = pool
+                .get()
+                .await
+                .map_err(|e| ServerError::msg(e.to_string()))?;
+            render_view_response(
+                views,
+                &view_name,
+                &http_req,
+                false,
+                Some(rpc),
+                Some(&mut exec),
+            )
+            .await?
+        } else {
+            render_view_response(views, &view_name, &http_req, false, Some(rpc), None).await?
+        };
         return write_http_response(&mut stream, &http_resp).await;
     }
 
@@ -134,7 +162,7 @@ where
         .get()
         .await
         .map_err(|e| ServerError::msg(e.to_string()))?;
-    let http_resp = dispatch_http(&http_req, rpc, &mut exec, Some(views)).await?;
+    let http_resp = dispatch_http(&http_req, rpc, &mut exec, None).await?;
     write_http_response(&mut stream, &http_resp).await
 }
 
@@ -149,8 +177,73 @@ where
 {
     let http_req = parse_http_request(&mut stream).await?;
 
-    if let Some(http_resp) = try_dispatch_get_dev(&http_req, handles).await? {
+    if let Some(http_resp) = try_dispatch_dev_meta(&http_req, handles).await? {
         return write_http_response(&mut stream, &http_resp).await;
+    }
+
+    if let Some(http_resp) = try_dispatch_static_get(&http_req)? {
+        return write_http_response(&mut stream, &http_resp).await;
+    }
+
+    {
+        let views = handles.views.read().await;
+        if let Some(view_name) = view_route_name(&http_req, Some(&views)) {
+            let needs_db = views
+                .views
+                .get(&view_name)
+                .map(|m| m.load.needs_db())
+                .unwrap_or(false);
+            let http_resp = if needs_db {
+                match (pool, handles.rpc.as_ref()) {
+                    (Some(pool), Some(rpc)) => {
+                        let mut exec = pool
+                            .get()
+                            .await
+                            .map_err(|e| ServerError::msg(e.to_string()))?;
+                        render_view_response(
+                            &views,
+                            &view_name,
+                            &http_req,
+                            true,
+                            Some(rpc),
+                            Some(&mut exec),
+                        )
+                        .await?
+                    }
+                    _ => {
+                        render_view_response(
+                            &views,
+                            &view_name,
+                            &http_req,
+                            true,
+                            handles.rpc.as_ref(),
+                            None,
+                        )
+                        .await?
+                    }
+                }
+            } else {
+                render_view_response(
+                    &views,
+                    &view_name,
+                    &http_req,
+                    true,
+                    handles.rpc.as_ref(),
+                    None,
+                )
+                .await?
+            };
+            return write_http_response(&mut stream, &http_resp).await;
+        }
+    }
+
+    // Unknown GET
+    if http_req.method.eq_ignore_ascii_case("GET") {
+        return write_http_response(
+            &mut stream,
+            &HttpResponse::text(404, "Not Found", "not found"),
+        )
+        .await;
     }
 
     // RPC requires pool + RpcServer.
@@ -174,17 +267,32 @@ where
     write_http_response(&mut stream, &http_resp).await
 }
 
-/// Handle GET routes that do not need an [`Executor`]. Returns `None` if the request
-/// should fall through to RPC (POST) dispatch.
+/// Handle GET routes that do not need an [`Executor`] or view load (health / islands JS).
+/// View SSR is async — use [`dispatch_http`] / [`dispatch_http_dev`] instead.
 pub fn try_dispatch_get(
     http_req: &HttpRequest,
     views: Option<&ViewBundle>,
 ) -> ServerResult<Option<HttpResponse>> {
-    try_dispatch_get_inner(http_req, views, false)
+    let _ = views;
+    try_dispatch_static_get(http_req)
 }
 
-/// Dev GET dispatch: `/__dev`, overlay script, hot views + error overlay injection.
-pub async fn try_dispatch_get_dev<S, R>(
+fn try_dispatch_static_get(http_req: &HttpRequest) -> ServerResult<Option<HttpResponse>> {
+    if !http_req.method.eq_ignore_ascii_case("GET") {
+        return Ok(None);
+    }
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+
+    if path == "/health" || path == "/healthz" {
+        return Ok(Some(HttpResponse::json(200, "OK", &json!({ "ok": true }))));
+    }
+    if path == "/puddly-islands.js" {
+        return Ok(Some(HttpResponse::js(200, "OK", ISLANDS_RUNTIME_JS)));
+    }
+    Ok(None)
+}
+
+async fn try_dispatch_dev_meta<S, R>(
     http_req: &HttpRequest,
     handles: &DevHandles<S, R>,
 ) -> ServerResult<Option<HttpResponse>>
@@ -199,45 +307,70 @@ where
 
     if path == "/__dev" {
         let st = handles.state.read().await;
-        return Ok(Some(HttpResponse::json(200, "OK", &serde_json::to_value(st.status()).unwrap_or_else(|_| json!({ "ok": false })))));
+        return Ok(Some(HttpResponse::json(
+            200,
+            "OK",
+            &serde_json::to_value(st.status()).unwrap_or_else(|_| json!({ "ok": false })),
+        )));
     }
     if path == "/__dev/overlay.js" {
         return Ok(Some(HttpResponse::js(200, "OK", DEV_OVERLAY_JS)));
     }
-
-    let views = handles.views.read().await;
-    try_dispatch_get_inner(http_req, Some(&views), true)
+    Ok(None)
 }
 
-fn try_dispatch_get_inner(
+/// Dev GET dispatch: `/__dev`, overlay script, hot views + error overlay injection.
+pub async fn try_dispatch_get_dev<S, R>(
     http_req: &HttpRequest,
-    views: Option<&ViewBundle>,
-    inject_overlay: bool,
-) -> ServerResult<Option<HttpResponse>> {
-    if !http_req.method.eq_ignore_ascii_case("GET") {
-        return Ok(None);
+    handles: &DevHandles<S, R>,
+) -> ServerResult<Option<HttpResponse>>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
+    if let Some(resp) = try_dispatch_dev_meta(http_req, handles).await? {
+        return Ok(Some(resp));
     }
-    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+    if let Some(resp) = try_dispatch_static_get(http_req)? {
+        return Ok(Some(resp));
+    }
 
-    if path == "/health" || path == "/healthz" {
-        return Ok(Some(HttpResponse::json(200, "OK", &json!({ "ok": true }))));
-    }
-    if path == "/puddly-islands.js" {
-        return Ok(Some(HttpResponse::js(200, "OK", ISLANDS_RUNTIME_JS)));
-    }
-    if let Some(bundle) = views {
-        if path == "/" {
-            let name = bundle.default_view_name().unwrap_or("todo");
-            return Ok(Some(render_view_response(bundle, name, inject_overlay)?));
+    let views = handles.views.read().await;
+    let Some(view_name) = view_route_name(http_req, Some(&views)) else {
+        if http_req.method.eq_ignore_ascii_case("GET") {
+            return Ok(Some(HttpResponse::text(404, "Not Found", "not found")));
         }
-        if let Some(name) = path.strip_prefix("/v/") {
-            if !name.is_empty() && !name.contains('/') {
-                return Ok(Some(render_view_response(bundle, name, inject_overlay)?));
-            }
+        return Ok(None);
+    };
+
+    // No pool on this helper — DB loads → 503. Tests that need data use dispatch_http_dev + exec.
+    render_view_response(
+        &views,
+        &view_name,
+        http_req,
+        true,
+        handles.rpc.as_ref(),
+        None,
+    )
+    .await
+    .map(Some)
+}
+
+fn view_route_name(http_req: &HttpRequest, views: Option<&ViewBundle>) -> Option<String> {
+    if !http_req.method.eq_ignore_ascii_case("GET") {
+        return None;
+    }
+    let bundle = views?;
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+    if path == "/" {
+        return Some(bundle.default_view_name().unwrap_or("todo").to_string());
+    }
+    if let Some(name) = path.strip_prefix("/v/") {
+        if !name.is_empty() && !name.contains('/') {
+            return Some(name.to_string());
         }
     }
-    // Unknown GET
-    Ok(Some(HttpResponse::text(404, "Not Found", "not found")))
+    None
 }
 
 /// Build `/__dev` JSON from a [`DevState`] (unit-test helper; no async).
@@ -248,7 +381,7 @@ pub fn dev_status_response(state: &DevState) -> HttpResponse {
 
 /// Async dispatch used by the accept loop and unit tests.
 /// Caller supplies an already-checked-out (or in-memory) [`Executor`].
-/// `views` enables SSR routes (`GET /`, `GET /v/<name>`, island runtime).
+/// `views` enables SSR routes (`GET /`, `GET /v/<name>`).
 pub async fn dispatch_http<S, R>(
     http_req: &HttpRequest,
     rpc: &Mutex<RpcServer<S, R>>,
@@ -259,8 +392,18 @@ where
     S: SessionStore,
     R: ActionRunner,
 {
-    if let Some(resp) = try_dispatch_get(http_req, views)? {
+    if let Some(resp) = try_dispatch_static_get(http_req)? {
         return Ok(resp);
+    }
+
+    if let Some(view_name) = view_route_name(http_req, views) {
+        let bundle = views.expect("view_route_name implies views");
+        return render_view_response(bundle, &view_name, http_req, false, Some(rpc), Some(exec))
+            .await;
+    }
+
+    if http_req.method.eq_ignore_ascii_case("GET") {
+        return Ok(HttpResponse::text(404, "Not Found", "not found"));
     }
 
     if !http_req.method.eq_ignore_ascii_case("POST") {
@@ -303,14 +446,36 @@ where
 pub async fn dispatch_http_dev<S, R>(
     http_req: &HttpRequest,
     handles: &DevHandles<S, R>,
-    exec: Option<&mut dyn Executor>,
+    mut exec: Option<&mut dyn Executor>,
 ) -> ServerResult<HttpResponse>
 where
     S: SessionStore,
     R: ActionRunner,
 {
-    if let Some(resp) = try_dispatch_get_dev(http_req, handles).await? {
+    if let Some(resp) = try_dispatch_dev_meta(http_req, handles).await? {
         return Ok(resp);
+    }
+    if let Some(resp) = try_dispatch_static_get(http_req)? {
+        return Ok(resp);
+    }
+
+    {
+        let views = handles.views.read().await;
+        if let Some(view_name) = view_route_name(http_req, Some(&views)) {
+            return render_view_response(
+                &views,
+                &view_name,
+                http_req,
+                true,
+                handles.rpc.as_ref(),
+                exec.take(),
+            )
+            .await;
+        }
+    }
+
+    if http_req.method.eq_ignore_ascii_case("GET") {
+        return Ok(HttpResponse::text(404, "Not Found", "not found"));
     }
 
     if !http_req.method.eq_ignore_ascii_case("POST") {
@@ -358,27 +523,68 @@ where
     Ok(rpc_to_http(rpc_resp))
 }
 
-fn render_view_response(
+async fn render_view_response<S, R>(
     bundle: &ViewBundle,
     name: &str,
+    http_req: &HttpRequest,
     inject_overlay: bool,
-) -> ServerResult<HttpResponse> {
-    let props = demo_todo_props();
-    match render_page(bundle, name, &props) {
-        Ok(html) => {
-            let html = if inject_overlay {
-                inject_dev_overlay_script(&html)
-            } else {
-                html
-            };
-            Ok(HttpResponse::html(200, "OK", html))
-        }
-        Err(puddly_views::ViewError::UnknownView { name }) => Ok(HttpResponse::text(
+    rpc: Option<&Mutex<RpcServer<S, R>>>,
+    exec: Option<&mut dyn Executor>,
+) -> ServerResult<HttpResponse>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
+    let Some(module) = bundle.views.get(name) else {
+        return Ok(HttpResponse::text(
             404,
             "Not Found",
             format!("unknown view `{name}`"),
+        ));
+    };
+
+    let query = http_req.path.split('?').nth(1);
+    let cookie = http_req.headers.get("cookie").map(String::as_str);
+
+    let outcome = if !module.load.needs_db() {
+        resolve_static_load(&module.load)
+    } else if let (Some(rpc), Some(exec)) = (rpc, exec) {
+        let mut rpc = rpc.lock().await;
+        resolve_load(&module.load, query, cookie, Some(&mut *rpc), Some(exec)).await
+    } else {
+        resolve_static_load(&module.load) // → Unavailable when needs_db
+    };
+
+    let maybe_overlay = |html: String| -> String {
+        if inject_overlay {
+            inject_dev_overlay_script(&html)
+        } else {
+            html
+        }
+    };
+
+    match outcome {
+        LoadOutcome::Props(props) => match render_page(bundle, name, &props) {
+            Ok(html) => Ok(HttpResponse::html(200, "OK", maybe_overlay(html))),
+            Err(puddly_views::ViewError::UnknownView { name }) => Ok(HttpResponse::text(
+                404,
+                "Not Found",
+                format!("unknown view `{name}`"),
+            )),
+            Err(e) => Err(ServerError::msg(e.to_string())),
+        },
+        LoadOutcome::Unauthorized => Ok(HttpResponse::html(
+            401,
+            "Unauthorized",
+            maybe_overlay(unauthorized_html()),
         )),
-        Err(e) => Err(ServerError::msg(e.to_string())),
+        LoadOutcome::Unavailable(msg) => Ok(HttpResponse::html(
+            503,
+            "Service Unavailable",
+            maybe_overlay(unavailable_html(&msg)),
+        )),
+        LoadOutcome::BadRequest(msg) => Ok(HttpResponse::text(400, "Bad Request", msg)),
+        LoadOutcome::Error(msg) => Err(ServerError::msg(msg)),
     }
 }
 

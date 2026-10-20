@@ -2,7 +2,8 @@
 
 use crate::discover::{island_name_from_path, view_name_from_path};
 use crate::error::{ViewError, ViewResult};
-use crate::ir::{CompiledModule, ModuleKind};
+use crate::ir::{CompiledModule, LoadSpec, ModuleKind};
+use crate::load::lower_load_export;
 use crate::lower::lower_default_export;
 use oxc_allocator::Allocator;
 use oxc_parser::{Parser, ParserReturn};
@@ -41,12 +42,18 @@ pub fn parse_module(path: &Path, source: &str, kind: ModuleKind) -> ViewResult<C
         });
     }
 
+    let load = if kind == ModuleKind::View {
+        lower_load_export(&program, path)?
+    } else {
+        LoadSpec::default()
+    };
     let lowered = lower_default_export(&program, path)?;
     Ok(CompiledModule {
         name,
         path: path.to_path_buf(),
         kind,
         root: lowered.root,
+        load,
     })
 }
 

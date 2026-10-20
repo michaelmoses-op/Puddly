@@ -174,13 +174,38 @@ fn is_void(tag: &str) -> bool {
     )
 }
 
-/// Demo props for the todo slice (no DB).
+/// Test-only fixture props for the todo slice (not used by the server happy path).
 pub fn demo_todo_props() -> Value {
     serde_json::json!({
         "heading": "Todos",
         "title": "Buy milk",
         "done": false
     })
+}
+
+/// Temporary Step 14 bridge: islands need scalar props until the list dialect (Step 15).
+///
+/// Keeps `todos` (full list payload) and, when `todos.items[0]` exists, also sets
+/// top-level `title` / `done` for the existing `TodoRow` island.
+pub fn apply_todo_island_bridge(props: &mut Value) {
+    let Some(obj) = props.as_object_mut() else {
+        return;
+    };
+    let Some(first) = obj
+        .get("todos")
+        .and_then(|t| t.get("items"))
+        .and_then(|items| items.as_array())
+        .and_then(|arr| arr.first())
+        .cloned()
+    else {
+        return;
+    };
+    if let Some(title) = first.get("title").cloned() {
+        obj.insert("title".into(), title);
+    }
+    if let Some(done) = first.get("done").cloned() {
+        obj.insert("done".into(), done);
+    }
 }
 
 /// Wrap a body fragment in a minimal HTML document + island runtime script.

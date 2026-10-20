@@ -1,3 +1,8 @@
+export const load = {
+  todos: { list: "todo" },
+  heading: { value: "Todos" },
+};
+
 export default function TodoView(props) {
   return (
     <html>

@@ -7,10 +7,9 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 13** — packaging B + long-lived IPC worker (ADR-031): protocol v2
-(`id`), frozen `IpcErrorCode`, `puddly build` → `.puddly/generated/action-sidecar.mjs`,
-long-lived Node worker by default (oneshot via `PUDDLY_ACTION_SIDECAR_ONESHOT=1`).
-Pipeline Steps 1–13 complete after merge.
+**Build plan Step 14** — declarative view `load` + session auth (ADR-032): views declare
+`export const load = { … }`; SSR props come from resource CRUD (not fixture props);
+anonymous → 401 HTML. Pipeline 1–13 complete; MVP track starts at Step 14.
 
 ## Quick start
 
@@ -19,12 +18,12 @@ cargo run -p puddly-cli -- check examples/todo-slice
 cargo run -p puddly-cli -- explain E0212
 # Package sidecar into gitignored .puddly/generated/:
 cargo run -p puddly-cli -- build examples/todo-slice
-# Dev server (views + /__dev; no Postgres required):
+# Dev server (/__dev; views with DB load need DATABASE_URL + session cookie):
 cargo run -p puddly-cli -- dev examples/todo-slice --bind 127.0.0.1:3000
-# Then: GET /__dev → panel JSON; GET / → SSR with overlay script
-# Full RPC in dev (needs Postgres + Node 22+ for custom actions):
+# Then: GET /__dev → panel JSON; GET / without DB → 503 if view `load` needs list/get
+# Full RPC + view load in dev (needs Postgres + Node 22+ for custom actions):
 # DATABASE_URL=postgres://... cargo run -p puddly-cli -- dev examples/todo-slice
-# Production-ish serve (always needs DATABASE_URL):
+# Production-ish serve (always needs DATABASE_URL); GET / uses load + session cookie:
 # DATABASE_URL=postgres://... cargo run -p puddly-cli -- serve examples/todo-slice --bind 127.0.0.1:3000
 cargo test --workspace
 ```
