@@ -4,7 +4,7 @@ use puddly_actions::ActionRunner;
 use puddly_auth::SessionStore;
 use puddly_db::Executor;
 use puddly_rpc::{RpcRequest, RpcServer};
-use puddly_views::{apply_todo_island_bridge, LoadSource, LoadSpec};
+use puddly_views::{LoadSource, LoadSpec};
 use serde_json::{json, Map, Value};
 
 /// Outcome of running a view's declarative load.
@@ -96,10 +96,7 @@ where
         }
     }
 
-    let mut props = Value::Object(props);
-    // Temporary until Step 15 list dialect: flatten first todo row for island scalars.
-    apply_todo_island_bridge(&mut props);
-    LoadOutcome::Props(props)
+    LoadOutcome::Props(Value::Object(props))
 }
 
 /// Resolve loads that are purely static (`value:` entries). No RPC / DB.
@@ -118,9 +115,7 @@ pub fn resolve_static_load(load: &LoadSpec) -> LoadOutcome {
             LoadSource::List { .. } | LoadSource::Get { .. } => unreachable!("needs_db"),
         }
     }
-    let mut props = Value::Object(props);
-    apply_todo_island_bridge(&mut props);
-    LoadOutcome::Props(props)
+    LoadOutcome::Props(Value::Object(props))
 }
 
 enum LoadRunErr {

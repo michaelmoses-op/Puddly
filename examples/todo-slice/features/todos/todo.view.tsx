@@ -14,7 +14,9 @@ export default function TodoView(props) {
         <main class="todo-app">
           <h1>{props.heading}</h1>
           <ul class="todo-list">
-            <TodoRow title={props.title} done={props.done} />
+            {props.todos.items.map((item) => (
+              <TodoRow key={item.id} title={item.title} done={item.done} />
+            ))}
           </ul>
         </main>
         <script src="/puddly-islands.js"></script>

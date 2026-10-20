@@ -3,9 +3,9 @@
 use crate::error::{ViewError, ViewResult};
 use crate::ir::{Attr, AttrValue, NodeIr, PropPath};
 use oxc_ast::ast::{
-    ArrowFunctionBody, CallExpression, ExportDefaultDeclarationKind, Expression, FunctionBody,
-    JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName,
-    JSXExpression, Program, Statement,
+    ArrowFunctionBody, CallExpression, ExportDefaultDeclarationKind, Expression, FormalParameter,
+    FunctionBody, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
+    JSXElementName, JSXExpression, Program, Statement,
 };
 use std::path::Path;
 
@@ -149,6 +149,9 @@ fn lower_child(child: &JSXChild<'_>, path: &Path) -> ViewResult<Option<NodeIr>> 
                 let expr = other
                     .as_expression()
                     .ok_or_else(|| dialect(path, "unsupported JSX expression"))?;
+                if let Some(map) = try_lower_map(expr, path)? {
+                    return Ok(Some(map));
+                }
                 let path_expr = expr_to_prop_path(expr, path)?;
                 let puddly_id = path_expr
                     .segments
@@ -176,6 +179,108 @@ fn lower_child(child: &JSXChild<'_>, path: &Path) -> ViewResult<Option<NodeIr>> 
             }))
         }
         JSXChild::Spread(_) => Err(dialect(path, "JSX spread children are not supported")),
+    }
+}
+
+/// `{expr.map((ident) => <jsx/>)}` → [`NodeIr::Map`].
+fn try_lower_map(expr: &Expression<'_>, path: &Path) -> ViewResult<Option<NodeIr>> {
+    let call = match unwrap_paren(expr) {
+        Expression::CallExpression(c) => c.as_ref(),
+        _ => return Ok(None),
+    };
+    let Some((items_expr, _)) = map_callee(call) else {
+        return Ok(None);
+    };
+    if call.arguments.len() != 1 {
+        return Err(dialect(
+            path,
+            "`.map` list dialect expects a single arrow callback",
+        ));
+    }
+    let arg = call.arguments[0]
+        .as_expression()
+        .ok_or_else(|| dialect(path, "`.map` callback must be an arrow function"))?;
+    let Expression::ArrowFunctionExpression(arrow) = unwrap_paren(arg) else {
+        return Err(dialect(
+            path,
+            "`.map` callback must be an arrow function `(item) => <jsx/>`",
+        ));
+    };
+    if arrow.params.items.len() != 1 || arrow.params.rest.is_some() {
+        return Err(dialect(
+            path,
+            "`.map` arrow must take exactly one identifier parameter",
+        ));
+    }
+    let item_ident = formal_ident_name(&arrow.params.items[0], path)?;
+    let body_expr = match &arrow.body {
+        ArrowFunctionBody::FunctionBody(_) => {
+            return Err(dialect(
+                path,
+                "`.map` arrow body must be JSX (or parenthesized JSX), not a block",
+            ));
+        }
+        other => other
+            .as_expression()
+            .ok_or_else(|| dialect(path, "`.map` arrow must yield JSX"))?,
+    };
+    let mut body = lower_jsx_expr(body_expr, path)?;
+    let key = extract_key_attr(&mut body);
+    let items = expr_to_prop_path(items_expr, path)?;
+    Ok(Some(NodeIr::Map {
+        items,
+        item_ident,
+        key,
+        body: Box::new(body),
+    }))
+}
+
+fn map_callee<'a>(call: &'a CallExpression<'a>) -> Option<(&'a Expression<'a>, ())> {
+    match &call.callee {
+        Expression::StaticMemberExpression(mem) if mem.property.name.as_str() == "map" => {
+            Some((&mem.object, ()))
+        }
+        Expression::ParenthesizedExpression(p) => match &p.expression {
+            Expression::StaticMemberExpression(mem) if mem.property.name.as_str() == "map" => {
+                Some((&mem.object, ()))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn formal_ident_name(param: &FormalParameter<'_>, path: &Path) -> ViewResult<String> {
+    param
+        .pattern
+        .get_identifier_name()
+        .map(|n| n.as_str().to_string())
+        .ok_or_else(|| {
+            dialect(
+                path,
+                "`.map` parameter must be a simple identifier (no destructuring)",
+            )
+        })
+}
+
+fn extract_key_attr(body: &mut NodeIr) -> Option<PropPath> {
+    let attrs = match body {
+        NodeIr::Element { attrs, .. } => attrs,
+        NodeIr::Island { props, .. } => props,
+        _ => return None,
+    };
+    let idx = attrs.iter().position(|a| a.name == "key")?;
+    let attr = attrs.remove(idx);
+    match attr.value {
+        AttrValue::Expr(path) => Some(path),
+        AttrValue::String(_) => None,
+    }
+}
+
+fn unwrap_paren<'a>(expr: &'a Expression<'a>) -> &'a Expression<'a> {
+    match expr {
+        Expression::ParenthesizedExpression(p) => unwrap_paren(&p.expression),
+        other => other,
     }
 }
 
@@ -267,12 +372,12 @@ fn expr_to_prop_path(expr: &Expression<'_>, path: &Path) -> ViewResult<PropPath>
             }
             Err(dialect(
                 path,
-                "only `{ident}`, `{props.field}`, or `{String(props.field)}` expressions are supported",
+                "only `{ident}`, `{props.field}`, `{item.field}`, or `.map((ident) => jsx)` are supported",
             ))
         }
         _ => Err(dialect(
             path,
-            "only `{ident}` / `{props.field}` expressions are supported",
+            "only `{ident}` / `{props.field}` / `{item.field}` expressions are supported",
         )),
     }
 }
