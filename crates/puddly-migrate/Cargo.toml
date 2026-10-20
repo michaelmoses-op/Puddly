@@ -6,6 +6,7 @@ license.workspace = true
 description = "SQL migration generation and drift check for Puddly"
 
 [dependencies]
+futures = { workspace = true }
 puddly-core = { workspace = true }
 puddly-db = { workspace = true }
 puddly-ir = { workspace = true }
@@ -17,3 +18,4 @@ serde_json = { workspace = true }
 puddly-check = { workspace = true }
 puddly-db = { workspace = true }
 insta = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

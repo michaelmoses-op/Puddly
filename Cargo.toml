@@ -54,7 +54,11 @@ similar = "2"
 insta = { version = "1", features = ["json", "yaml"] }
 sha2 = "0.10"
 hex = "0.4"
-postgres = { version = "0.19", default-features = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+async-trait = "0.1"
+tokio-postgres = "0.7"
+deadpool-postgres = "0.14"
+futures = "0.3"
 argon2 = "0.5"
 password-hash = "0.5"
 rand = "0.8"

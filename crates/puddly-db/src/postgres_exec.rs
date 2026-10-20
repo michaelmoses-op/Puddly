@@ -1,74 +1,121 @@
-//! Thin Postgres adapter (`postgres` crate). Only used when `DATABASE_URL` is set.
+//! Thin async Postgres adapter (`tokio-postgres` + optional deadpool checkout).
 
 use crate::error::{DbError, DbResult};
 use crate::value::{DbRow, SqlValue};
 use crate::Executor;
-use postgres::types::ToSql;
-use postgres::{Client, NoTls, Row};
+use async_trait::async_trait;
+use bytes::BytesMut;
+use std::error::Error;
+use tokio_postgres::types::{to_sql_checked, IsNull, ToSql, Type};
+use tokio_postgres::{Client, NoTls, Row};
 
+/// Async executor over a `tokio_postgres::Client` (owned or pooled).
 pub struct PostgresExecutor {
-    client: Client,
+    client: ClientKind,
+}
+
+enum ClientKind {
+    /// Direct connect (CLI migrate / one-shot). Connection task is spawned.
+    Owned(Client),
+    /// Checked out from [`crate::PgPool`]; returns to the pool on drop.
+    Pooled(deadpool_postgres::Object),
 }
 
 impl PostgresExecutor {
-    pub fn connect(url: &str) -> DbResult<Self> {
-        let client = Client::connect(url, NoTls).map_err(|e| DbError::Connect(e.to_string()))?;
-        Ok(Self { client })
+    /// Connect with a single owned client (spawns the connection driver task).
+    pub async fn connect(url: &str) -> DbResult<Self> {
+        let (client, connection) = tokio_postgres::connect(url, NoTls)
+            .await
+            .map_err(|e| DbError::Connect(e.to_string()))?;
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("postgres connection error: {e}");
+            }
+        });
+        Ok(Self {
+            client: ClientKind::Owned(client),
+        })
+    }
+
+    /// Wrap a deadpool checkout (used by [`crate::PgPool::get`]).
+    pub(crate) fn from_pooled(object: deadpool_postgres::Object) -> Self {
+        Self {
+            client: ClientKind::Pooled(object),
+        }
+    }
+
+    fn client_mut(&mut self) -> &mut Client {
+        match &mut self.client {
+            ClientKind::Owned(c) => c,
+            ClientKind::Pooled(o) => o,
+        }
     }
 }
 
+impl ToSql for SqlValue {
+    fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
+        match self {
+            SqlValue::Null => Ok(IsNull::Yes),
+            SqlValue::Bool(b) => b.to_sql(ty, out),
+            SqlValue::Int(i) => i.to_sql(ty, out),
+            SqlValue::Float(f) => f.to_sql(ty, out),
+            SqlValue::Text(s) | SqlValue::Uuid(s) => s.to_sql(ty, out),
+        }
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        <bool as ToSql>::accepts(ty)
+            || <i64 as ToSql>::accepts(ty)
+            || <f64 as ToSql>::accepts(ty)
+            || <String as ToSql>::accepts(ty)
+            || matches!(*ty, Type::UNKNOWN)
+    }
+
+    to_sql_checked!();
+}
+
+#[async_trait]
 impl Executor for PostgresExecutor {
-    fn execute(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<u64> {
-        let boxed = bind_params(params)?;
-        let refs: Vec<&(dyn ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+    async fn execute(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<u64> {
+        let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as _).collect();
         let n = self
-            .client
+            .client_mut()
             .execute(sql, refs.as_slice())
+            .await
             .map_err(|e| DbError::msg(e.to_string()))?;
         Ok(n)
     }
 
-    fn query(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<Vec<DbRow>> {
-        let boxed = bind_params(params)?;
-        let refs: Vec<&(dyn ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+    async fn query(&mut self, sql: &str, params: &[SqlValue]) -> DbResult<Vec<DbRow>> {
+        let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as _).collect();
         let rows = self
-            .client
+            .client_mut()
             .query(sql, refs.as_slice())
+            .await
             .map_err(|e| DbError::msg(e.to_string()))?;
         Ok(rows.iter().map(row_to_db).collect())
     }
 
-    fn begin(&mut self) -> DbResult<()> {
-        self.client
+    async fn begin(&mut self) -> DbResult<()> {
+        self.client_mut()
             .batch_execute("BEGIN")
+            .await
             .map_err(|e| DbError::Transaction(e.to_string()))
     }
 
-    fn commit(&mut self) -> DbResult<()> {
-        self.client
+    async fn commit(&mut self) -> DbResult<()> {
+        self.client_mut()
             .batch_execute("COMMIT")
+            .await
             .map_err(|e| DbError::Transaction(e.to_string()))
     }
 
-    fn rollback(&mut self) -> DbResult<()> {
-        self.client
+    async fn rollback(&mut self) -> DbResult<()> {
+        self.client_mut()
             .batch_execute("ROLLBACK")
+            .await
             .map_err(|e| DbError::Transaction(e.to_string()))
     }
-}
-
-fn bind_params(params: &[SqlValue]) -> DbResult<Vec<Box<dyn ToSql + Sync>>> {
-    let mut out: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(params.len());
-    for p in params {
-        match p {
-            SqlValue::Null => out.push(Box::new(None::<String>)),
-            SqlValue::Bool(b) => out.push(Box::new(*b)),
-            SqlValue::Int(i) => out.push(Box::new(*i)),
-            SqlValue::Float(f) => out.push(Box::new(*f)),
-            SqlValue::Text(s) | SqlValue::Uuid(s) => out.push(Box::new(s.clone())),
-        }
-    }
-    Ok(out)
 }
 
 fn row_to_db(row: &Row) -> DbRow {

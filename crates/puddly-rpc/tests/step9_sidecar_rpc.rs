@@ -28,8 +28,8 @@ fn node_available() -> bool {
         .unwrap_or(false)
 }
 
-#[test]
-fn rpc_archive_via_sidecar_receives_user() {
+#[tokio::test]
+async fn rpc_archive_via_sidecar_receives_user() {
     if !node_available() {
         eprintln!("skip: node not on PATH");
         return;
@@ -42,7 +42,7 @@ fn rpc_archive_via_sidecar_receives_user() {
     let mut runner = IpcActionRunner::node_sidecar(&workspace_root());
 
     let user = puddly_auth::AuthUser::new("owner-me", "me@x.co").with_roles(vec!["admin".into()]);
-    let token = sessions.create(&user, 3600).unwrap();
+    let token = sessions.create(&user, 3600).await.unwrap();
 
     let mut rt = RpcRuntime {
         ir: &ir,
@@ -61,7 +61,7 @@ fn rpc_archive_via_sidecar_receives_user() {
     let req = RpcRequest::new("todo.archive", json!({"id": "arch-1"}))
         .with_header(CSRF_HEADER_NAME, "1")
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
-    let resp = rt.handle(&req, &mut exec);
+    let resp = rt.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     let data = resp.data.unwrap();
     assert_eq!(data["archived"], "arch-1");

@@ -8,7 +8,7 @@ use puddly_diagnostics::explain_text;
 use puddly_manifest::{
     build_manifest, stale_message, stale_status, write_manifest, StaleStatus,
 };
-use puddly_db::{Executor, PostgresExecutor};
+use puddly_db::{PgPool, PoolConfig, PostgresExecutor};
 use puddly_migrate::{
     apply_migrations, apply_migrations_dry_run, drift_message, drift_status, generate_migration,
     DriftStatus,
@@ -21,7 +21,8 @@ use puddly_rpc::RpcServer;
 use puddly_server::{serve, ServerConfig};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Parser, Debug)]
 #[command(name = CLI_NAME, version)]
@@ -152,7 +153,8 @@ enum AuthCmd {
     },
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check { path, json } => {
@@ -341,12 +343,12 @@ fn main() -> ExitCode {
                     eprintln!("error: refuse to apply while migrations are missing or drifted");
                     return ExitCode::from(1);
                 }
-                match PostgresExecutor::connect(&url) {
+                match PostgresExecutor::connect(&url).await {
                     Ok(mut exec) => {
                         let outcome = if dry_run {
-                            apply_migrations_dry_run(&path, &mut exec)
+                            apply_migrations_dry_run(&path, &mut exec).await
                         } else {
-                            apply_migrations(&path, &mut exec)
+                            apply_migrations(&path, &mut exec).await
                         };
                         match outcome {
                             Ok(r) => {
@@ -422,8 +424,8 @@ fn main() -> ExitCode {
                 );
             }
             rpc.secure_cookies = secure_cookies;
-            let exec: Box<dyn Executor + Send> = match PostgresExecutor::connect(&url) {
-                Ok(e) => Box::new(e),
+            let pool = match PgPool::connect(&PoolConfig::from_url(&url)).await {
+                Ok(p) => p,
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::from(1);
@@ -434,7 +436,7 @@ fn main() -> ExitCode {
                 root: path,
                 secure_cookies,
             };
-            match serve(&config, Arc::new(Mutex::new(rpc)), Arc::new(Mutex::new(exec))) {
+            match serve(&config, Arc::new(Mutex::new(rpc)), pool).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("error: {e}");

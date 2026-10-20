@@ -3,16 +3,22 @@ name = "puddly-db"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Database executor interface (Postgres first) for Puddly"
+description = "Async database executor interface (Postgres first) for Puddly"
 
 [features]
 default = ["postgres"]
-postgres = ["dep:postgres"]
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres"]
 
 [dependencies]
+async-trait = { workspace = true }
+bytes = "1"
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-postgres = { workspace = true, optional = true }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true, optional = true }
+deadpool-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

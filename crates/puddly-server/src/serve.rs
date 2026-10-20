@@ -1,16 +1,17 @@
-//! Bind + accept loop and single-exchange dispatch onto `RpcServer`.
+//! Async bind + accept loop and single-exchange dispatch onto `RpcServer`.
 
 use crate::error::{ServerError, ServerResult};
 use crate::http::{
     parse_http_request, write_http_response, HttpRequest, HttpResponse,
 };
 use puddly_core::{CSRF_HEADER_NAME, DISPLAY_NAME};
-use puddly_db::Executor;
+use puddly_db::{Executor, PgPool};
 use puddly_rpc::{RpcRequest, RpcResponse, RpcServer};
 use serde_json::{json, Value};
-use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -29,65 +30,81 @@ impl Default for ServerConfig {
     }
 }
 
-/// Blocking accept loop. `exec` is shared across connections (sync ADR-024).
-pub fn serve<S, R>(
+/// Async accept loop. Check out a pool connection per request (no executor mutex).
+/// `RpcServer` remains behind a mutex for in-memory session state.
+pub async fn serve<S, R>(
     config: &ServerConfig,
     rpc: Arc<Mutex<RpcServer<S, R>>>,
-    exec: Arc<Mutex<Box<dyn Executor + Send>>>,
+    pool: PgPool,
 ) -> ServerResult<()>
 where
     S: puddly_auth::SessionStore + Send + 'static,
     R: puddly_actions::ActionRunner + Send + 'static,
 {
-    let listener = TcpListener::bind(&config.bind)?;
+    let listener = TcpListener::bind(&config.bind).await?;
     eprintln!(
         "{DISPLAY_NAME} server listening on http://{}",
         config.bind
     );
-    for stream in listener.incoming() {
-        let mut stream = stream?;
+    loop {
+        let (stream, _) = listener.accept().await?;
         let rpc = Arc::clone(&rpc);
-        let exec = Arc::clone(&exec);
-        // Sync: handle inline (no thread pool yet).
-        if let Err(e) = handle_stream(&mut stream, &rpc, &exec) {
-            eprintln!("request error: {e}");
-        }
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = handle_stream(stream, &rpc, &pool).await {
+                eprintln!("request error: {e}");
+            }
+        });
     }
-    Ok(())
 }
 
-/// Handle a single already-accepted stream (tests / one-shot).
-pub fn serve_once<S, R>(
+/// Handle a single already-accepted stream (tests / one-shot) with a checked-out executor.
+pub async fn serve_once<S, R>(
     stream: &mut TcpStream,
     rpc: &Mutex<RpcServer<S, R>>,
-    exec: &Mutex<Box<dyn Executor + Send>>,
+    exec: &mut dyn Executor,
 ) -> ServerResult<()>
 where
     S: puddly_auth::SessionStore,
     R: puddly_actions::ActionRunner,
 {
-    handle_stream(stream, rpc, exec)
+    let http_req = parse_http_request(stream).await?;
+    let http_resp = dispatch_http(&http_req, rpc, exec).await?;
+    write_http_response(stream, &http_resp).await
 }
 
-fn handle_stream<S, R>(
-    stream: &mut TcpStream,
+async fn handle_stream<S, R>(
+    mut stream: TcpStream,
     rpc: &Mutex<RpcServer<S, R>>,
-    exec: &Mutex<Box<dyn Executor + Send>>,
+    pool: &PgPool,
 ) -> ServerResult<()>
 where
     S: puddly_auth::SessionStore,
     R: puddly_actions::ActionRunner,
 {
-    let http_req = parse_http_request(stream)?;
-    let http_resp = dispatch_http(&http_req, rpc, exec)?;
-    write_http_response(stream, &http_resp)
+    let http_req = parse_http_request(&mut stream).await?;
+    // Health checks skip pool checkout.
+    if http_req.method.eq_ignore_ascii_case("GET")
+        && (http_req.path == "/health" || http_req.path == "/healthz")
+    {
+        let http_resp = HttpResponse::json(200, "OK", &json!({ "ok": true }));
+        return write_http_response(&mut stream, &http_resp).await;
+    }
+
+    let mut exec = pool
+        .get()
+        .await
+        .map_err(|e| ServerError::msg(e.to_string()))?;
+    let http_resp = dispatch_http(&http_req, rpc, &mut exec).await?;
+    write_http_response(&mut stream, &http_resp).await
 }
 
-/// Pure dispatch used by the accept loop and unit tests.
-pub fn dispatch_http<S, R>(
+/// Async dispatch used by the accept loop and unit tests.
+/// Caller supplies an already-checked-out (or in-memory) [`Executor`].
+pub async fn dispatch_http<S, R>(
     http_req: &HttpRequest,
     rpc: &Mutex<RpcServer<S, R>>,
-    exec: &Mutex<Box<dyn Executor + Send>>,
+    exec: &mut dyn Executor,
 ) -> ServerResult<HttpResponse>
 where
     S: puddly_auth::SessionStore,
@@ -128,13 +145,8 @@ where
     let _ = CSRF_HEADER_NAME;
 
     let rpc_resp = {
-        let mut rpc = rpc
-            .lock()
-            .map_err(|_| ServerError::msg("rpc lock poisoned"))?;
-        let mut exec = exec
-            .lock()
-            .map_err(|_| ServerError::msg("exec lock poisoned"))?;
-        rpc.handle(&rpc_req, exec.as_mut())
+        let mut rpc = rpc.lock().await;
+        rpc.handle(&rpc_req, exec).await
     };
 
     Ok(rpc_to_http(rpc_resp))
@@ -169,7 +181,6 @@ fn rpc_to_http(resp: RpcResponse) -> HttpResponse {
     let body = serde_json::to_value(&resp).unwrap_or_else(|_| json!({ "ok": false }));
     let mut http = HttpResponse::json(status, reason, &body);
     http.set_cookies = resp.set_cookies;
-    // Recalculate content-length after cookies don't affect body
     http
 }
 

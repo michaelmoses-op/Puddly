@@ -35,8 +35,8 @@ fn sidecar_script_exists() {
     assert!(script.is_file(), "missing {}", script.display());
 }
 
-#[test]
-fn node_sidecar_runs_archive_action() {
+#[tokio::test]
+async fn node_sidecar_runs_archive_action() {
     if !node_available() {
         eprintln!("skip: node not on PATH");
         return;
@@ -61,7 +61,7 @@ fn node_sidecar_runs_archive_action() {
         source: &source,
         user: Some(user),
     };
-    let data = runner.run(call).expect("sidecar execute");
+    let data = runner.run(call).await.expect("sidecar execute");
     assert_eq!(data["archived"], "todo-42");
     assert_eq!(data["userId"], "user-7");
 }

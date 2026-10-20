@@ -16,3 +16,4 @@ thiserror = { workspace = true }
 [dev-dependencies]
 puddly-check = { workspace = true }
 insta = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

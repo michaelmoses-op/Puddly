@@ -16,7 +16,7 @@ use puddly_db::{DbResult, DbRow, Executor, SqlValue};
 use puddly_ir::AppIr;
 
 /// Run a prepared statement through an executor.
-pub fn exec_prepared(
+pub async fn exec_prepared(
     exec: &mut dyn Executor,
     stmt: &PreparedStatement,
     params: &[SqlValue],
@@ -29,10 +29,10 @@ pub fn exec_prepared(
             params.len()
         )));
     }
-    exec.execute(&stmt.sql, params)
+    exec.execute(&stmt.sql, params).await
 }
 
-pub fn query_prepared(
+pub async fn query_prepared(
     exec: &mut dyn Executor,
     stmt: &PreparedStatement,
     params: &[SqlValue],
@@ -45,7 +45,7 @@ pub fn query_prepared(
             params.len()
         )));
     }
-    exec.query(&stmt.sql, params)
+    exec.query(&stmt.sql, params).await
 }
 
 /// Convenience: compile the whole app's statement book from IR.

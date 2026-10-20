@@ -1,4 +1,4 @@
-//! Action IPC JSONL protocol + Node sidecar runner (Steps 8–9).
+//! Action IPC JSONL protocol + Node sidecar runner (Steps 8–10).
 //!
 //! Protocol:
 //! - Host writes one request line to the sidecar stdin.
@@ -6,9 +6,14 @@
 //!
 //! In-repo sidecar: `tools/puddly-action-sidecar.mjs` (Node 22+ with
 //! `--experimental-strip-types` so `*.action.ts` can be imported).
+//!
+//! Step 10: [`ActionRunner::run`] is async; sync `std::process::Command` runs
+//! inside `tokio::task::spawn_blocking`. Protocol and error shapes are unchanged
+//! — do **not** freeze [`ActionError`] / IPC error codes in this step.
 
 use crate::error::{ActionError, ActionResult};
 use crate::{ActionCall, ActionRunner};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -206,44 +211,29 @@ impl IpcActionRunner {
     pub fn is_configured(&self) -> bool {
         self.argv.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
     }
-}
 
-/// Walk `start` and parents for a directory containing [`DEFAULT_SIDECAR_SCRIPT`].
-pub fn find_sidecar_workspace(start: &Path) -> Option<PathBuf> {
-    let mut cur = if start.is_file() {
-        start.parent()?.to_path_buf()
-    } else {
-        start.to_path_buf()
-    };
-    loop {
-        if cur.join(DEFAULT_SIDECAR_SCRIPT).is_file() {
-            return Some(cur);
-        }
-        if !cur.pop() {
-            return None;
-        }
-    }
-}
-
-impl ActionRunner for IpcActionRunner {
-    fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
-        // Prefer per-call user from RpcContext (wired in dispatch).
-        let req = IpcRequest::run(&call);
+    /// Blocking IPC round-trip (runs on a blocking thread pool via `spawn_blocking`).
+    fn run_blocking(
+        argv: Option<Vec<String>>,
+        call_resource: &str,
+        call_action: &str,
+        call_path: &str,
+        req: IpcRequest,
+    ) -> ActionResult<Value> {
         let line = req.encode_line()?;
 
-        let Some(argv) = &self.argv else {
+        let Some(argv) = argv else {
             let _ = IpcResponse::err(
                 "sidecar_not_configured",
                 format!(
-                    "IPC protocol v{IPC_PROTOCOL_VERSION} ready; set {ACTION_SIDECAR_ENV} or use IpcActionRunner::node_sidecar for `{}.{}`",
-                    call.resource, call.action
+                    "IPC protocol v{IPC_PROTOCOL_VERSION} ready; set {ACTION_SIDECAR_ENV} or use IpcActionRunner::node_sidecar for `{call_resource}.{call_action}`",
                 ),
             )
             .encode_line()?;
             return Err(ActionError::NotExecutable {
-                resource: call.resource.to_string(),
-                action: call.action.to_string(),
-                path: call.source_path.display().to_string(),
+                resource: call_resource.to_string(),
+                action: call_action.to_string(),
+                path: call_path.to_string(),
             });
         };
 
@@ -307,6 +297,42 @@ impl ActionRunner for IpcActionRunner {
                 .unwrap_or_else(|| "ipc error".into());
             Err(ActionError::msg(msg))
         }
+    }
+}
+
+/// Walk `start` and parents for a directory containing [`DEFAULT_SIDECAR_SCRIPT`].
+pub fn find_sidecar_workspace(start: &Path) -> Option<PathBuf> {
+    let mut cur = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if cur.join(DEFAULT_SIDECAR_SCRIPT).is_file() {
+            return Some(cur);
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+#[async_trait]
+impl ActionRunner for IpcActionRunner {
+    async fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
+        let req = IpcRequest::run(&call);
+        let argv = self.argv.clone();
+        let resource = call.resource.to_string();
+        let action = call.action.to_string();
+        let path = call.source_path.display().to_string();
+
+        // Sync Command stays blocking; wrap so the Tokio runtime is not stalled.
+        // Protocol untouched — ActionError / IPC codes are not frozen this step.
+        tokio::task::spawn_blocking(move || {
+            Self::run_blocking(argv, &resource, &action, &path, req)
+        })
+        .await
+        .map_err(|e| ActionError::msg(format!("ipc spawn_blocking join: {e}")))?
     }
 }
 

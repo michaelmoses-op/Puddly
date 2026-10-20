@@ -15,23 +15,23 @@ fn auth_schema_sql_mentions_accounts_and_sessions() {
     assert!(AUTH_SCHEMA_SQL.contains("puddly_sessions"));
 }
 
-#[test]
-fn memory_session_roundtrip_and_resolve() {
+#[tokio::test]
+async fn memory_session_roundtrip_and_resolve() {
     let mut store = MemorySessionStore::new();
     let user = AuthUser::new("u1", "a@b.co").with_roles(vec!["admin".into()]);
-    let token = store.create(&user, 3600).unwrap();
+    let token = store.create(&user, 3600).await.unwrap();
     assert_ne!(token.len(), 0);
 
-    let got = store.get(&token).unwrap().expect("session");
+    let got = store.get(&token).await.unwrap().expect("session");
     assert_eq!(got.user, user);
 
     let req = RequestView::with_token(&token);
-    let resolved = resolve_user(&mut store, &req).expect("user");
+    let resolved = resolve_user(&mut store, &req).await.expect("user");
     assert_eq!(resolved.id, "u1");
 
-    store.delete(&token).unwrap();
-    assert!(store.get(&token).unwrap().is_none());
-    assert!(resolve_user(&mut store, &req).is_none());
+    store.delete(&token).await.unwrap();
+    assert!(store.get(&token).await.unwrap().is_none());
+    assert!(resolve_user(&mut store, &req).await.is_none());
 }
 
 #[test]
@@ -50,8 +50,8 @@ fn cookie_header_helpers() {
     assert!(!clear.contains("Secure"));
 }
 
-#[test]
-fn register_and_login_with_recording_executor() {
+#[tokio::test]
+async fn register_and_login_with_recording_executor() {
     let mut exec = RecordingExecutor::new();
     let mut sessions = MemorySessionStore::new();
 
@@ -66,6 +66,7 @@ fn register_and_login_with_recording_executor() {
                 user_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
                 roles: vec!["editor".into()],
             })
+            .await
             .unwrap();
         assert_eq!(user.email, "alice@example.com");
     }
@@ -88,7 +89,10 @@ fn register_and_login_with_recording_executor() {
 
     let token = {
         let mut provider = EmailPasswordProvider::new(&mut exec, &mut sessions);
-        let (logged_in, token) = provider.login("alice@example.com", "password123").unwrap();
+        let (logged_in, token) = provider
+            .login("alice@example.com", "password123")
+            .await
+            .unwrap();
         assert_eq!(logged_in.id, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
         assert!(logged_in.has_role("editor"));
         assert!(!token.is_empty());
@@ -107,20 +111,28 @@ fn register_and_login_with_recording_executor() {
     exec.push_canned(vec![row2]);
     {
         let mut provider = EmailPasswordProvider::new(&mut exec, &mut sessions);
-        assert!(provider.login("alice@example.com", "wrong-password").is_err());
+        assert!(provider
+            .login("alice@example.com", "wrong-password")
+            .await
+            .is_err());
     }
 
     // session from successful login still resolves
-    assert!(resolve_user(&mut sessions, &RequestView::with_token(&token)).is_some());
+    assert!(resolve_user(&mut sessions, &RequestView::with_token(&token))
+        .await
+        .is_some());
 }
 
-#[test]
-fn login_unknown_email_is_invalid_credentials() {
+#[tokio::test]
+async fn login_unknown_email_is_invalid_credentials() {
     let mut exec = RecordingExecutor::new();
     exec.push_canned(vec![]); // no account
     let mut sessions = MemorySessionStore::new();
     let mut provider = EmailPasswordProvider::new(&mut exec, &mut sessions);
-    let err = provider.login("nobody@example.com", "password123").unwrap_err();
+    let err = provider
+        .login("nobody@example.com", "password123")
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("invalid credentials"));
 }
 

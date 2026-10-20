@@ -7,7 +7,7 @@ pub struct RpcContext {
 }
 
 impl RpcContext {
-    pub fn from_sessions<S: SessionStore>(
+    pub async fn from_sessions<S: SessionStore>(
         sessions: &mut S,
         cookie_header: Option<&str>,
     ) -> Self {
@@ -16,7 +16,7 @@ impl RpcContext {
             None => RequestView::default(),
         };
         Self {
-            user: resolve_user(sessions, &request),
+            user: resolve_user(sessions, &request).await,
         }
     }
 

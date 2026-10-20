@@ -2,6 +2,7 @@
 
 use crate::error::{AuthError, AuthResult};
 use crate::user::AuthUser;
+use async_trait::async_trait;
 use puddly_db::{DbRow, Executor, SqlValue};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -25,10 +26,11 @@ impl Session {
     }
 }
 
-pub trait SessionStore {
-    fn create(&mut self, user: &AuthUser, ttl_secs: u64) -> AuthResult<String>;
-    fn get(&mut self, raw_token: &str) -> AuthResult<Option<Session>>;
-    fn delete(&mut self, raw_token: &str) -> AuthResult<()>;
+#[async_trait]
+pub trait SessionStore: Send {
+    async fn create(&mut self, user: &AuthUser, ttl_secs: u64) -> AuthResult<String>;
+    async fn get(&mut self, raw_token: &str) -> AuthResult<Option<Session>>;
+    async fn delete(&mut self, raw_token: &str) -> AuthResult<()>;
 }
 
 /// Generate a 32-byte CSPRNG token, hex-encoded.
@@ -63,8 +65,9 @@ impl MemorySessionStore {
     }
 }
 
+#[async_trait]
 impl SessionStore for MemorySessionStore {
-    fn create(&mut self, user: &AuthUser, ttl_secs: u64) -> AuthResult<String> {
+    async fn create(&mut self, user: &AuthUser, ttl_secs: u64) -> AuthResult<String> {
         let raw = generate_session_token();
         let hash = hash_token(&raw);
         self.inner.insert(
@@ -77,7 +80,7 @@ impl SessionStore for MemorySessionStore {
         Ok(raw)
     }
 
-    fn get(&mut self, raw_token: &str) -> AuthResult<Option<Session>> {
+    async fn get(&mut self, raw_token: &str) -> AuthResult<Option<Session>> {
         let hash = hash_token(raw_token);
         match self.inner.get(&hash) {
             Some(s) if !s.is_expired(now_unix()) => Ok(Some(s.clone())),
@@ -89,7 +92,7 @@ impl SessionStore for MemorySessionStore {
         }
     }
 
-    fn delete(&mut self, raw_token: &str) -> AuthResult<()> {
+    async fn delete(&mut self, raw_token: &str) -> AuthResult<()> {
         self.inner.remove(&hash_token(raw_token));
         Ok(())
     }
@@ -128,8 +131,9 @@ fn row_to_session(row: &DbRow) -> AuthResult<Session> {
     })
 }
 
+#[async_trait]
 impl SessionStore for DbSessionStore<'_> {
-    fn create(&mut self, user: &AuthUser, ttl_secs: u64) -> AuthResult<String> {
+    async fn create(&mut self, user: &AuthUser, ttl_secs: u64) -> AuthResult<String> {
         let raw = generate_session_token();
         let hash = hash_token(&raw);
         let expires = now_unix().saturating_add(ttl_secs);
@@ -146,11 +150,12 @@ impl SessionStore for DbSessionStore<'_> {
                     SqlValue::Int(expires as i64),
                 ],
             )
+            .await
             .map_err(|e| AuthError::msg(e.to_string()))?;
         Ok(raw)
     }
 
-    fn get(&mut self, raw_token: &str) -> AuthResult<Option<Session>> {
+    async fn get(&mut self, raw_token: &str) -> AuthResult<Option<Session>> {
         let hash = hash_token(raw_token);
         let rows = self
             .exec
@@ -159,6 +164,7 @@ impl SessionStore for DbSessionStore<'_> {
                  FROM \"puddly_sessions\" WHERE \"token_hash\" = $1",
                 &[SqlValue::Text(hash)],
             )
+            .await
             .map_err(|e| AuthError::msg(e.to_string()))?;
         let Some(row) = rows.into_iter().next() else {
             return Ok(None);
@@ -170,13 +176,14 @@ impl SessionStore for DbSessionStore<'_> {
         Ok(Some(session))
     }
 
-    fn delete(&mut self, raw_token: &str) -> AuthResult<()> {
+    async fn delete(&mut self, raw_token: &str) -> AuthResult<()> {
         let hash = hash_token(raw_token);
         self.exec
             .execute(
                 "DELETE FROM \"puddly_sessions\" WHERE \"token_hash\" = $1",
                 &[SqlValue::Text(hash)],
             )
+            .await
             .map_err(|e| AuthError::msg(e.to_string()))?;
         Ok(())
     }

@@ -1,6 +1,7 @@
-//! `migrate apply` sketch — explicit step, no startup migration (ADR-013 / ADR-018).
+//! `migrate apply` — async explicit step, no startup migration (ADR-013 / ADR-018 / ADR-028).
 
 use crate::store::{list_migrations, MigrationFile};
+use futures::future::FutureExt;
 use puddly_db::{with_transaction, DbResult, Executor, SqlValue};
 use std::fs;
 use std::path::Path;
@@ -15,7 +16,7 @@ pub struct ApplyResult {
 }
 
 /// Ensure the migrations ledger table exists.
-pub fn ensure_migrations_table(exec: &mut dyn Executor) -> DbResult<()> {
+pub async fn ensure_migrations_table(exec: &mut dyn Executor) -> DbResult<()> {
     exec.execute(
         &format!(
             "CREATE TABLE IF NOT EXISTS \"{MIGRATIONS_TABLE}\" (\n  \
@@ -23,15 +24,18 @@ pub fn ensure_migrations_table(exec: &mut dyn Executor) -> DbResult<()> {
              \"applied_at\" TIMESTAMPTZ NOT NULL DEFAULT now()\n)"
         ),
         &[],
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
-fn applied_names(exec: &mut dyn Executor) -> DbResult<std::collections::BTreeSet<String>> {
-    let rows = exec.query(
-        &format!("SELECT \"name\" FROM \"{MIGRATIONS_TABLE}\" ORDER BY \"name\""),
-        &[],
-    )?;
+async fn applied_names(exec: &mut dyn Executor) -> DbResult<std::collections::BTreeSet<String>> {
+    let rows = exec
+        .query(
+            &format!("SELECT \"name\" FROM \"{MIGRATIONS_TABLE}\" ORDER BY \"name\""),
+            &[],
+        )
+        .await?;
     let mut set = std::collections::BTreeSet::new();
     for row in rows {
         if let Some(SqlValue::Text(n)) = row.get("name") {
@@ -61,9 +65,9 @@ pub fn sql_body_for_apply(sql: &str) -> String {
 }
 
 /// Apply pending migration files in sorted order inside a transaction per file.
-pub fn apply_migrations(root: &Path, exec: &mut dyn Executor) -> DbResult<ApplyResult> {
-    ensure_migrations_table(exec)?;
-    let done = applied_names(exec)?;
+pub async fn apply_migrations(root: &Path, exec: &mut dyn Executor) -> DbResult<ApplyResult> {
+    ensure_migrations_table(exec).await?;
+    let done = applied_names(exec).await?;
     let files = list_migrations(root).map_err(|e| puddly_db::DbError::msg(e.to_string()))?;
 
     let mut applied = Vec::new();
@@ -74,7 +78,7 @@ pub fn apply_migrations(root: &Path, exec: &mut dyn Executor) -> DbResult<ApplyR
             skipped.push(file.name.clone());
             continue;
         }
-        apply_one(exec, file)?;
+        apply_one(exec, file).await?;
         applied.push(file.name.clone());
     }
 
@@ -95,8 +99,11 @@ pub fn apply_migrations(root: &Path, exec: &mut dyn Executor) -> DbResult<ApplyR
 ///
 /// Does not create `puddly_migrations`. If the ledger table is missing, every file
 /// is treated as pending (same outcome as a fresh database).
-pub fn apply_migrations_dry_run(root: &Path, exec: &mut dyn Executor) -> DbResult<ApplyResult> {
-    let done = match applied_names(exec) {
+pub async fn apply_migrations_dry_run(
+    root: &Path,
+    exec: &mut dyn Executor,
+) -> DbResult<ApplyResult> {
+    let done = match applied_names(exec).await {
         Ok(set) => set,
         Err(_) => std::collections::BTreeSet::new(),
     };
@@ -126,24 +133,33 @@ pub fn apply_migrations_dry_run(root: &Path, exec: &mut dyn Executor) -> DbResul
     })
 }
 
-fn apply_one(exec: &mut dyn Executor, file: &MigrationFile) -> DbResult<()> {
+async fn apply_one(exec: &mut dyn Executor, file: &MigrationFile) -> DbResult<()> {
     let raw = fs::read_to_string(&file.path).map_err(|e| puddly_db::DbError::msg(e.to_string()))?;
     let body = sql_body_for_apply(&raw);
     let name = file.name.clone();
+    let statements: Vec<String> = split_statements(&body)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
 
     with_transaction(exec, |tx| {
-        for stmt in split_statements(&body) {
-            if stmt.trim().is_empty() {
-                continue;
+        async move {
+            for stmt in &statements {
+                if stmt.trim().is_empty() {
+                    continue;
+                }
+                tx.execute(stmt, &[]).await?;
             }
-            tx.execute(stmt, &[])?;
+            tx.execute(
+                &format!("INSERT INTO \"{MIGRATIONS_TABLE}\" (\"name\") VALUES ($1)"),
+                &[SqlValue::Text(name)],
+            )
+            .await?;
+            Ok(())
         }
-        tx.execute(
-            &format!("INSERT INTO \"{MIGRATIONS_TABLE}\" (\"name\") VALUES ($1)"),
-            &[SqlValue::Text(name)],
-        )?;
-        Ok(())
+        .boxed()
     })
+    .await
 }
 
 fn split_statements(sql: &str) -> Vec<&str> {

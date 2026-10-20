@@ -2,7 +2,7 @@
 //!
 //! Step 6 loads declared `*.action.ts` sources into an [`ActionCatalog`].
 //! Step 9 executes them via the in-repo Node sidecar (`IpcActionRunner`) over
-//! the frozen JSONL protocol.
+//! the frozen JSONL protocol. Step 10 makes [`ActionRunner`] async (ADR-028).
 
 mod error;
 mod ipc;
@@ -15,6 +15,7 @@ pub use ipc::{
 };
 pub use load::{load_actions, ActionCatalog, LoadedAction};
 
+use async_trait::async_trait;
 use puddly_ir::AppIr;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -34,17 +35,19 @@ pub struct ActionCall<'a> {
     pub user: Option<IpcUser>,
 }
 
-/// Pluggable executor for custom actions.
-pub trait ActionRunner {
-    fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value>;
+/// Pluggable executor for custom actions (async; ADR-028).
+#[async_trait]
+pub trait ActionRunner: Send {
+    async fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value>;
 }
 
 /// Default runner: refuses to execute TS (skeleton). Catalog still proves loading works.
 #[derive(Debug, Default)]
 pub struct StubActionRunner;
 
+#[async_trait]
 impl ActionRunner for StubActionRunner {
-    fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
+    async fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
         Err(ActionError::NotExecutable {
             resource: call.resource.to_string(),
             action: call.action.to_string(),
@@ -73,8 +76,9 @@ impl NativeActionRunner {
     }
 }
 
+#[async_trait]
 impl ActionRunner for NativeActionRunner {
-    fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
+    async fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
         let key = format!("{}.{}", call.resource, call.action);
         match self.handlers.get_mut(&key) {
             Some(h) => h(call.input),

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Puddly auth: email/password, cookie sessions, access rules"
 
 [dependencies]
+async-trait = { workspace = true }
 puddly-core = { workspace = true }
 puddly-db = { workspace = true }
 puddly-ir = { workspace = true }
@@ -22,3 +23,4 @@ subtle = { workspace = true }
 
 [dev-dependencies]
 puddly-db = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

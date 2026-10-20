@@ -1,7 +1,8 @@
-//! Minimal **sync** HTTP server over [`puddly_rpc::RpcServer`] (ADR-024).
+//! Minimal **async** HTTP server over [`puddly_rpc::RpcServer`] (ADR-028).
 //!
-//! Intentionally uses `std::net` + a tiny HTTP/1.1 parser — no Tokio/axum yet —
-//! so the Step 4 sync `postgres` executor and stub pool stay coherent.
+//! Hand-rolled HTTP/1.1 parser on `tokio::net::TcpListener` / AsyncRead/Write.
+//! Concurrent accepts spawn one task per connection; each request checks out a
+//! pool connection (no global `Mutex` on the executor).
 
 mod error;
 mod http;

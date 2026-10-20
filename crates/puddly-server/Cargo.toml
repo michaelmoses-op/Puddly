@@ -3,7 +3,7 @@ name = "puddly-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Minimal sync HTTP adapter over puddly-rpc (ADR-024)"
+description = "Minimal async HTTP adapter over puddly-rpc (ADR-028)"
 
 [dependencies]
 puddly-actions = { workspace = true }
@@ -14,6 +14,8 @@ puddly-db = { workspace = true }
 puddly-rpc = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 puddly-db = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

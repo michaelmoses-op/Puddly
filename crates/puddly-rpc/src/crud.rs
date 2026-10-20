@@ -4,6 +4,7 @@ use crate::access_gate::{enforce, list_owner_field, require_rule, row_values_fro
 use crate::context::RpcContext;
 use crate::error::{RpcError, RpcResult};
 use crate::list_body::apply_list_body;
+use futures::future::FutureExt;
 use puddly_data::{
     exec_prepared, query_prepared, PreparedKind, QueryBuilder, StatementBook,
 };
@@ -11,7 +12,7 @@ use puddly_db::{with_transaction, DbRow, Executor, SqlValue};
 use puddly_ir::ResourceIr;
 use serde_json::{json, Map, Value};
 
-pub fn handle_crud(
+pub async fn handle_crud(
     resource: &ResourceIr,
     operation: &str,
     body: &Value,
@@ -20,11 +21,11 @@ pub fn handle_crud(
     exec: &mut dyn Executor,
 ) -> RpcResult<Value> {
     match operation {
-        "list" => list(resource, body, ctx, book, exec),
-        "get" => get(resource, body, ctx, book, exec),
-        "create" => create(resource, body, ctx, book, exec),
-        "update" => update(resource, body, ctx, book, exec),
-        "delete" => delete(resource, body, ctx, book, exec),
+        "list" => list(resource, body, ctx, book, exec).await,
+        "get" => get(resource, body, ctx, book, exec).await,
+        "create" => create(resource, body, ctx, book, exec).await,
+        "update" => update(resource, body, ctx, book, exec).await,
+        "delete" => delete(resource, body, ctx, book, exec).await,
         other => Err(RpcError::NotFound(format!(
             "{}.{}",
             resource.name, other
@@ -32,7 +33,7 @@ pub fn handle_crud(
     }
 }
 
-fn list(
+async fn list(
     resource: &ResourceIr,
     body: &Value,
     ctx: &RpcContext,
@@ -56,14 +57,14 @@ fn list(
     let page = qb
         .build()
         .map_err(|e| RpcError::BadRequest(e.to_string()))?;
-    let rows = exec.query(&page.sql, &page.params)?;
+    let rows = exec.query(&page.sql, &page.params).await?;
     Ok(json!({
         "items": rows_to_json(&rows),
         "limit": page.limit,
     }))
 }
 
-fn get(
+async fn get(
     resource: &ResourceIr,
     body: &Value,
     ctx: &RpcContext,
@@ -74,7 +75,7 @@ fn get(
     let stmt = book
         .get(&resource.name, PreparedKind::FindById)
         .ok_or_else(|| RpcError::msg(format!("no find statement for {}", resource.name)))?;
-    let rows = query_prepared(exec, stmt, &[SqlValue::Uuid(id)])?;
+    let rows = query_prepared(exec, stmt, &[SqlValue::Uuid(id)]).await?;
     let row = rows
         .into_iter()
         .next()
@@ -85,7 +86,7 @@ fn get(
     Ok(row_to_json(&row))
 }
 
-fn create(
+async fn create(
     resource: &ResourceIr,
     body: &Value,
     ctx: &RpcContext,
@@ -100,13 +101,17 @@ fn create(
         .clone();
     let params = params_for_insert(&stmt, body)?;
     with_transaction(exec, |tx| {
-        exec_prepared(tx, &stmt, &params)?;
-        Ok(())
-    })?;
+        async move {
+            exec_prepared(tx, &stmt, &params).await?;
+            Ok(())
+        }
+        .boxed()
+    })
+    .await?;
     Ok(json!({ "created": true }))
 }
 
-fn update(
+async fn update(
     resource: &ResourceIr,
     body: &Value,
     ctx: &RpcContext,
@@ -118,7 +123,8 @@ fn update(
     let find = book
         .get(&resource.name, PreparedKind::FindById)
         .ok_or_else(|| RpcError::msg(format!("no find statement for {}", resource.name)))?;
-    let existing = query_prepared(exec, find, &[SqlValue::Uuid(id.clone())])?
+    let existing = query_prepared(exec, find, &[SqlValue::Uuid(id.clone())])
+        .await?
         .into_iter()
         .next()
         .ok_or_else(|| RpcError::NotFound(format!("{} not found", resource.name)))?;
@@ -130,11 +136,11 @@ fn update(
         .get(&resource.name, PreparedKind::UpdateById)
         .ok_or_else(|| RpcError::msg(format!("no update statement for {}", resource.name)))?;
     let params = params_for_update(stmt, body, &id)?;
-    exec_prepared(exec, stmt, &params)?;
+    exec_prepared(exec, stmt, &params).await?;
     Ok(json!({ "updated": true }))
 }
 
-fn delete(
+async fn delete(
     resource: &ResourceIr,
     body: &Value,
     ctx: &RpcContext,
@@ -145,7 +151,8 @@ fn delete(
     let find = book
         .get(&resource.name, PreparedKind::FindById)
         .ok_or_else(|| RpcError::msg(format!("no find statement for {}", resource.name)))?;
-    let existing = query_prepared(exec, find, &[SqlValue::Uuid(id.clone())])?
+    let existing = query_prepared(exec, find, &[SqlValue::Uuid(id.clone())])
+        .await?
         .into_iter()
         .next()
         .ok_or_else(|| RpcError::NotFound(format!("{} not found", resource.name)))?;
@@ -156,7 +163,7 @@ fn delete(
     let stmt = book
         .get(&resource.name, PreparedKind::DeleteById)
         .ok_or_else(|| RpcError::msg(format!("no delete statement for {}", resource.name)))?;
-    exec_prepared(exec, stmt, &[SqlValue::Uuid(id)])?;
+    exec_prepared(exec, stmt, &[SqlValue::Uuid(id)]).await?;
     Ok(json!({ "deleted": true }))
 }
 

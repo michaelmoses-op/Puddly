@@ -9,7 +9,7 @@ use puddly_auth::{
 use puddly_db::Executor;
 use serde_json::{json, Value};
 
-pub fn handle_auth_op<S: SessionStore>(
+pub async fn handle_auth_op<S: SessionStore>(
     operation: &str,
     body: &Value,
     exec: &mut dyn Executor,
@@ -17,14 +17,14 @@ pub fn handle_auth_op<S: SessionStore>(
     secure_cookie: bool,
 ) -> RpcResult<RpcResponse> {
     match operation {
-        "register" => register(body, exec, sessions, secure_cookie),
-        "login" => login(body, exec, sessions, secure_cookie),
-        "logout" => logout(body, sessions, secure_cookie),
+        "register" => register(body, exec, sessions, secure_cookie).await,
+        "login" => login(body, exec, sessions, secure_cookie).await,
+        "logout" => logout(body, sessions, secure_cookie).await,
         other => Err(RpcError::NotFound(format!("auth.{other}"))),
     }
 }
 
-fn register<S: SessionStore>(
+async fn register<S: SessionStore>(
     body: &Value,
     exec: &mut dyn Executor,
     sessions: &mut S,
@@ -57,18 +57,20 @@ fn register<S: SessionStore>(
         .unwrap_or_default();
 
     let mut provider = EmailPasswordProvider::new(exec, sessions);
-    let user = provider.register(RegisterInput {
-        email: email.to_string(),
-        password: password.to_string(),
-        user_id,
-        roles,
-    })?;
+    let user = provider
+        .register(RegisterInput {
+            email: email.to_string(),
+            password: password.to_string(),
+            user_id,
+            roles,
+        })
+        .await?;
     // Auto-login after register
-    let token = sessions.create(&user, SESSION_TTL_SECS)?;
+    let token = sessions.create(&user, SESSION_TTL_SECS).await?;
     Ok(session_response(&user, &token, secure_cookie))
 }
 
-fn login<S: SessionStore>(
+async fn login<S: SessionStore>(
     body: &Value,
     exec: &mut dyn Executor,
     sessions: &mut S,
@@ -84,18 +86,18 @@ fn login<S: SessionStore>(
         .ok_or_else(|| RpcError::BadRequest("password required".into()))?;
 
     let mut provider = EmailPasswordProvider::new(exec, sessions);
-    let (user, token) = provider.login(email, password)?;
+    let (user, token) = provider.login(email, password).await?;
     Ok(session_response(&user, &token, secure_cookie))
 }
 
-fn logout<S: SessionStore>(
+async fn logout<S: SessionStore>(
     body: &Value,
     sessions: &mut S,
     secure_cookie: bool,
 ) -> RpcResult<RpcResponse> {
     // Token from body or will be cleared via cookie anyway.
     if let Some(token) = body.get("token").and_then(|v| v.as_str()) {
-        sessions.delete(token)?;
+        sessions.delete(token).await?;
     }
     Ok(RpcResponse::ok_with_cookies(
         json!({ "loggedOut": true }),

@@ -3,6 +3,7 @@
 use crate::cookie::parse_session_cookie;
 use crate::session::SessionStore;
 use crate::user::AuthUser;
+use async_trait::async_trait;
 use puddly_core::SESSION_COOKIE_NAME;
 
 /// Minimal request view — HTTP server adapters fill this in later.
@@ -40,8 +41,9 @@ impl RequestView {
 }
 
 /// Resolver contract: map a request to an authenticated user or `None`.
-pub trait AuthResolver {
-    fn resolve(&mut self, request: &RequestView) -> Option<AuthUser>;
+#[async_trait]
+pub trait AuthResolver: Send {
+    async fn resolve(&mut self, request: &RequestView) -> Option<AuthUser>;
 }
 
 /// Default resolver: load session from cookie via [`SessionStore`].
@@ -59,11 +61,13 @@ impl<'a, S: SessionStore> SessionAuthResolver<'a, S> {
     }
 }
 
+#[async_trait]
 impl<S: SessionStore> AuthResolver for SessionAuthResolver<'_, S> {
-    fn resolve(&mut self, request: &RequestView) -> Option<AuthUser> {
+    async fn resolve(&mut self, request: &RequestView) -> Option<AuthUser> {
         let token = request.session_token()?;
         self.sessions
             .get(&token)
+            .await
             .ok()
             .flatten()
             .map(|s| s.user)
@@ -71,9 +75,9 @@ impl<S: SessionStore> AuthResolver for SessionAuthResolver<'_, S> {
 }
 
 /// Convenience: resolve with an explicit session store.
-pub fn resolve_user<S: SessionStore>(
+pub async fn resolve_user<S: SessionStore>(
     sessions: &mut S,
     request: &RequestView,
 ) -> Option<AuthUser> {
-    SessionAuthResolver::new(sessions).resolve(request)
+    SessionAuthResolver::new(sessions).resolve(request).await
 }
