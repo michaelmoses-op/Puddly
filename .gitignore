@@ -5,7 +5,7 @@ docs/
 /target/
 **/*.rs.bk
 
-# Generated framework output (commit only migrations/ and .puddly/manifest.json later)
+# Generated framework output — commit `.puddly/manifest.json` (ADR-017); ignore caches
 .puddly/cache/
 .puddly/generated/
 **/node_modules/

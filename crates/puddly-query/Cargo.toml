@@ -1,0 +1,16 @@
+[package]
+name = "puddly-query"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "inspect / impact query library over the Puddly manifest (ADR-005)"
+
+[dependencies]
+puddly-manifest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+puddly-check = { workspace = true }
+puddly-manifest = { workspace = true }
+insta = { workspace = true }

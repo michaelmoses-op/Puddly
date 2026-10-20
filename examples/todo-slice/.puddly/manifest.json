@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "framework": "Puddly",
+  "resources": [
+    {
+      "name": "project",
+      "exportName": "Project",
+      "path": "features/projects/project.resource.ts",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "id"
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "max": 200
+        },
+        {
+          "name": "owner",
+          "kind": "ref",
+          "target": "user"
+        },
+        {
+          "name": "createdAt",
+          "kind": "timestamp",
+          "sortable": true,
+          "auto": true
+        }
+      ],
+      "constraints": [],
+      "access": [
+        {
+          "name": "create",
+          "rule": {
+            "kind": "authenticated"
+          }
+        },
+        {
+          "name": "delete",
+          "rule": {
+            "kind": "owner",
+            "field": "owner"
+          }
+        },
+        {
+          "name": "list",
+          "rule": {
+            "kind": "owner",
+            "field": "owner"
+          }
+        },
+        {
+          "name": "update",
+          "rule": {
+            "kind": "owner",
+            "field": "owner"
+          }
+        }
+      ],
+      "actions": [],
+      "refs": [
+        "user"
+      ],
+      "referencedBy": [
+        "todo"
+      ]
+    },
+    {
+      "name": "todo",
+      "exportName": "Todo",
+      "path": "features/todos/todo.resource.ts",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "id"
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "max": 200
+        },
+        {
+          "name": "done",
+          "kind": "bool",
+          "default": false,
+          "filterable": true
+        },
+        {
+          "name": "dueDate",
+          "kind": "date",
+          "optional": true,
+          "filterable": true,
+          "sortable": true
+        },
+        {
+          "name": "project",
+          "kind": "ref",
+          "target": "project"
+        },
+        {
+          "name": "owner",
+          "kind": "ref",
+          "target": "user"
+        },
+        {
+          "name": "createdAt",
+          "kind": "timestamp",
+          "sortable": true,
+          "auto": true
+        },
+        {
+          "name": "isOverdue",
+          "kind": "computed",
+          "computed": {
+            "opaque": true,
+            "sourceShape": "(() => /* computed */)"
+          }
+        }
+      ],
+      "constraints": [
+        {
+          "kind": "limit",
+          "per": "owner",
+          "whereFields": [
+            {
+              "field": "done",
+              "value": false
+            }
+          ],
+          "max": 10
+        }
+      ],
+      "access": [
+        {
+          "name": "create",
+          "rule": {
+            "kind": "authenticated"
+          }
+        },
+        {
+          "name": "delete",
+          "rule": {
+            "kind": "owner",
+            "field": "owner"
+          }
+        },
+        {
+          "name": "list",
+          "rule": {
+            "kind": "owner",
+            "field": "owner"
+          }
+        },
+        {
+          "name": "update",
+          "rule": {
+            "kind": "owner",
+            "field": "owner"
+          }
+        }
+      ],
+      "actions": [
+        {
+          "name": "archive",
+          "run": "./archive.action.ts",
+          "input": [
+            {
+              "name": "id",
+              "kind": "id"
+            }
+          ]
+        }
+      ],
+      "refs": [
+        "project",
+        "user"
+      ],
+      "referencedBy": []
+    },
+    {
+      "name": "user",
+      "exportName": "User",
+      "path": "features/users/user.resource.ts",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "id"
+        },
+        {
+          "name": "email",
+          "kind": "text",
+          "max": 320,
+          "filterable": true
+        },
+        {
+          "name": "name",
+          "kind": "text",
+          "max": 120
+        },
+        {
+          "name": "createdAt",
+          "kind": "timestamp",
+          "sortable": true,
+          "auto": true
+        }
+      ],
+      "constraints": [],
+      "access": [
+        {
+          "name": "create",
+          "rule": {
+            "kind": "authenticated"
+          }
+        },
+        {
+          "name": "delete",
+          "rule": {
+            "kind": "owner",
+            "field": "id"
+          }
+        },
+        {
+          "name": "list",
+          "rule": {
+            "kind": "authenticated"
+          }
+        },
+        {
+          "name": "update",
+          "rule": {
+            "kind": "owner",
+            "field": "id"
+          }
+        }
+      ],
+      "actions": [],
+      "refs": [],
+      "referencedBy": [
+        "project",
+        "todo"
+      ]
+    }
+  ]
+}
