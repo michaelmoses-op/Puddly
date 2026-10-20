@@ -388,7 +388,7 @@ pub fn dev_status_response(state: &DevState) -> HttpResponse {
 
 /// Async dispatch used by the accept loop and unit tests.
 /// Caller supplies an already-checked-out (or in-memory) [`Executor`].
-/// `views` enables SSR routes (`GET /`, `GET /v/<name>`).
+/// `views` enables SSR routes (`GET /`, `GET /v/<name>`, plus `/login`/`/register` aliases).
 pub async fn dispatch_http<S, R>(
     http_req: &HttpRequest,
     rpc: &Mutex<RpcServer<S, R>>,
