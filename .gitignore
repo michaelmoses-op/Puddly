@@ -1,0 +1,12 @@
+# Design docs are local source of truth; not committed
+docs/
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Generated framework output (commit only migrations/ and .puddly/manifest.json later)
+.puddly/cache/
+.puddly/generated/
+**/node_modules/
+.DS_Store

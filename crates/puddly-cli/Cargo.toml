@@ -1,0 +1,17 @@
+[package]
+name = "puddly-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Puddly CLI — thin wrappers over library commands"
+default-run = "puddly"
+
+[[bin]]
+name = "puddly"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+puddly-check = { workspace = true }
+puddly-core = { workspace = true }
+puddly-diagnostics = { workspace = true }

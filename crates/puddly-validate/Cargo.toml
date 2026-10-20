@@ -1,0 +1,11 @@
+[package]
+name = "puddly-validate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-file validation of parsed Puddly resources"
+
+[dependencies]
+puddly-diagnostics = { workspace = true }
+puddly-ir = { workspace = true }
+puddly-parse = { workspace = true }
