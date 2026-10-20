@@ -7,11 +7,9 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 19** — `include` / batched relations (ADR-037): list + view `load`
-accept `include: ["project"]` (or a string); after list, one `IN (…)` batch per
-relation nests related objects on row JSON (no JOIN / no N+1). Example todo view shows
-project title. Prior: Step 18 vertical slice (ADR-036). Next = typed client /
-`puddly init`.
+**Build plan Step 20** — typed TS client (ADR-038): `puddly client generate` /
+`puddly build` emit `.puddly/generated/client.ts` (`api.todo.list`, `api.auth.login`,
+…). Prior: Step 19 `include` batch (ADR-037). Next = `puddly init` + CONVENTIONS.
 
 ## Try the todo slice
 
@@ -23,8 +21,9 @@ migrate apply → `puddly build` → `puddly serve` → open `/register`.
 ```bash
 cargo run -p puddly-cli -- check examples/todo-slice
 cargo run -p puddly-cli -- explain E0212
-# Package sidecar into gitignored .puddly/generated/:
+# Package sidecar + typed client into gitignored .puddly/generated/:
 cargo run -p puddly-cli -- build examples/todo-slice
+cargo run -p puddly-cli -- client generate examples/todo-slice
 # Dev server (/__dev; views with DB load need DATABASE_URL + session cookie):
 cargo run -p puddly-cli -- dev examples/todo-slice --bind 127.0.0.1:3000
 # Then: GET /login|/register → static auth forms (no DB); GET / without session → 401 + link
@@ -42,7 +41,8 @@ Custom actions run in a **long-lived** Node process speaking JSONL v2 on stdin/s
 
 | How | Detail |
 | --- | --- |
-| Package | `puddly build` → `.puddly/generated/action-sidecar.mjs` from `tools/` template |
+| Package | `puddly build` → `.puddly/generated/action-sidecar.mjs` + `client.ts` |
+| Typed client | `puddly client generate` → `api.<resource>.<op>()` (ADR-038) |
 | Default discovery | env → generated (walk-up) → `tools/puddly-action-sidecar.mjs` (walk-up) |
 | Convenience | `IpcActionRunner::node_sidecar` / `::generated_sidecar` |
 | Env override | `PUDDLY_ACTION_SIDECAR` = space-separated argv |

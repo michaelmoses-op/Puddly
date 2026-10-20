@@ -17,7 +17,7 @@ use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
 };
 use puddly_actions::{package_action_sidecar, ACTION_SIDECAR_ENV, GENERATED_SIDECAR_SCRIPT};
-use puddly_rpc::RpcServer;
+use puddly_rpc::{write_ts_client, RpcServer, GENERATED_CLIENT_TS};
 use puddly_server::{
     errors_from_check, serve, serve_dev, watch_dev_loop, DevHandles, DevState, ServerConfig,
 };
@@ -114,11 +114,16 @@ enum Commands {
         #[arg(long)]
         secure_cookies: bool,
     },
-    /// Package action sidecar into `.puddly/generated/` (ADR-031 / Step 13)
+    /// Package action sidecar + typed TS client into `.puddly/generated/` (ADR-031 / ADR-038)
     Build {
         /// App root (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
+    },
+    /// Typed TypeScript RPC client (ADR-038 / Step 20)
+    Client {
+        #[command(subcommand)]
+        command: ClientCmd,
     },
 }
 
@@ -172,6 +177,15 @@ enum MigrateCmd {
 enum AuthCmd {
     /// Commit opt-in `migrations/*_puddly_auth.sql` from `AUTH_SCHEMA_SQL`
     Scaffold {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClientCmd {
+    /// Write `.puddly/generated/client.ts` from the app IR
+    Generate {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
@@ -570,17 +584,60 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Build { path } => match package_action_sidecar(&path) {
-            Ok(dest) => {
-                println!(
-                    "{DISPLAY_NAME} build: wrote {} (template → {GENERATED_SIDECAR_SCRIPT})",
-                    dest.display()
-                );
-                ExitCode::SUCCESS
+        Commands::Build { path } => {
+            match package_action_sidecar(&path) {
+                Ok(dest) => {
+                    println!(
+                        "{DISPLAY_NAME} build: wrote {} (template → {GENERATED_SIDECAR_SCRIPT})",
+                        dest.display()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(1);
+                }
             }
-            Err(e) => {
-                eprintln!("error: {e}");
-                ExitCode::from(1)
+            let result = check(&path);
+            if !result.ok {
+                print_out(&format_check(&result, false));
+                return ExitCode::from(1);
+            }
+            let ir = result.ir.expect("ok implies ir");
+            match write_ts_client(&path, &ir) {
+                Ok(dest) => {
+                    println!(
+                        "{DISPLAY_NAME} build: wrote {} ({GENERATED_CLIENT_TS})",
+                        dest.display()
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: write client: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        Commands::Client { command } => match command {
+            ClientCmd::Generate { path } => {
+                let result = check(&path);
+                if !result.ok {
+                    print_out(&format_check(&result, false));
+                    return ExitCode::from(1);
+                }
+                let ir = result.ir.expect("ok implies ir");
+                match write_ts_client(&path, &ir) {
+                    Ok(dest) => {
+                        println!(
+                            "{DISPLAY_NAME} client: wrote {} ({GENERATED_CLIENT_TS})",
+                            dest.display()
+                        );
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        ExitCode::from(1)
+                    }
+                }
             }
         },
     }
