@@ -1,0 +1,15 @@
+[package]
+name = "mochi-parse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parse Mochi *.resource.ts files into unvalidated IR"
+
+[dependencies]
+mochi-diagnostics = { workspace = true }
+mochi-ir = { workspace = true }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_diagnostics = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }
