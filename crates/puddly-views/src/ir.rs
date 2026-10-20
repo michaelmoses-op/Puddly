@@ -59,8 +59,12 @@ pub struct LoadEntry {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadSource {
-    /// `list: "resource"` → `resource.list` with empty body → `{ items, limit }`.
-    List { resource: String },
+    /// `list: "resource"` → `resource.list` → `{ items, limit }`.
+    /// Optional `include: ["refField"]` (or a single string) batches relations (ADR-037).
+    List {
+        resource: String,
+        include: Vec<String>,
+    },
     /// `get: "resource", idFromQuery: "param"` → `resource.get` with `id` from `?param=`.
     Get {
         resource: String,

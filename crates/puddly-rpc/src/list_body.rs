@@ -80,12 +80,24 @@ pub fn apply_list_body(mut qb: QueryBuilder, body: &Value) -> RpcResult<QueryBui
         }
     }
 
-    if let Some(includes) = body.get("include").and_then(|v| v.as_array()) {
-        for inc in includes {
-            let name = inc
-                .as_str()
-                .ok_or_else(|| RpcError::BadRequest("include entries must be strings".into()))?;
-            qb = qb.include(name).map_err(data_err)?;
+    if let Some(include_val) = body.get("include") {
+        match include_val {
+            Value::Array(includes) => {
+                for inc in includes {
+                    let name = inc.as_str().ok_or_else(|| {
+                        RpcError::BadRequest("include entries must be strings".into())
+                    })?;
+                    qb = qb.include(name).map_err(data_err)?;
+                }
+            }
+            Value::String(name) => {
+                qb = qb.include(name).map_err(data_err)?;
+            }
+            _ => {
+                return Err(RpcError::BadRequest(
+                    "include must be a string or array of strings".into(),
+                ));
+            }
         }
     }
 

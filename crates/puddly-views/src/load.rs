@@ -69,6 +69,8 @@ fn lower_load_entry(expr: &Expression<'_>, path: &Path, key: &str) -> ViewResult
     let mut get: Option<String> = None;
     let mut id_from_query: Option<String> = None;
     let mut value: Option<Value> = None;
+    let mut include: Vec<String> = Vec::new();
+    let mut saw_include = false;
 
     for prop in &obj.properties {
         let ObjectPropertyKind::ObjectProperty(p) = prop else {
@@ -112,26 +114,48 @@ fn lower_load_entry(expr: &Expression<'_>, path: &Path, key: &str) -> ViewResult
                     )
                 })?);
             }
+            "include" => {
+                saw_include = true;
+                include = parse_include(&p.value, path, key)?;
+            }
             other => {
                 return Err(dialect(
                     path,
-                    format!("unknown `load.{key}` field `{other}` (expected list|get|idFromQuery|value)"),
+                    format!(
+                        "unknown `load.{key}` field `{other}` (expected list|get|idFromQuery|value|include)"
+                    ),
                 ));
             }
         }
     }
 
     match (list, get, value, id_from_query) {
-        (Some(resource), None, None, None) => Ok(LoadSource::List { resource }),
-        (None, Some(resource), None, Some(id_from_query)) => Ok(LoadSource::Get {
-            resource,
-            id_from_query,
-        }),
+        (Some(resource), None, None, None) => Ok(LoadSource::List { resource, include }),
+        (None, Some(resource), None, Some(id_from_query)) => {
+            if saw_include {
+                return Err(dialect(
+                    path,
+                    format!("`load.{key}.include` is only valid with `list`"),
+                ));
+            }
+            Ok(LoadSource::Get {
+                resource,
+                id_from_query,
+            })
+        }
         (None, Some(_), None, None) => Err(dialect(
             path,
             format!("`load.{key}.get` requires `idFromQuery`"),
         )),
-        (None, None, Some(value), None) => Ok(LoadSource::Value { value }),
+        (None, None, Some(value), None) => {
+            if saw_include {
+                return Err(dialect(
+                    path,
+                    format!("`load.{key}.include` is only valid with `list`"),
+                ));
+            }
+            Ok(LoadSource::Value { value })
+        }
         (None, None, None, None) => Err(dialect(
             path,
             format!("`load.{key}` needs `list`, `get`+`idFromQuery`, or `value`"),
@@ -139,6 +163,38 @@ fn lower_load_entry(expr: &Expression<'_>, path: &Path, key: &str) -> ViewResult
         _ => Err(dialect(
             path,
             format!("`load.{key}` must use exactly one of list / get+idFromQuery / value"),
+        )),
+    }
+}
+
+fn parse_include(expr: &Expression<'_>, path: &Path, key: &str) -> ViewResult<Vec<String>> {
+    if let Some(s) = string_lit(expr) {
+        return Ok(vec![s]);
+    }
+    match expr {
+        Expression::ArrayExpression(arr) => {
+            let mut out = Vec::new();
+            for el in &arr.elements {
+                let Some(expr) = el.as_expression() else {
+                    return Err(dialect(
+                        path,
+                        format!("`load.{key}.include` entries must be strings"),
+                    ));
+                };
+                let s = string_lit(expr).ok_or_else(|| {
+                    dialect(
+                        path,
+                        format!("`load.{key}.include` entries must be strings"),
+                    )
+                })?;
+                out.push(s);
+            }
+            Ok(out)
+        }
+        Expression::ParenthesizedExpression(p) => parse_include(&p.expression, path, key),
+        _ => Err(dialect(
+            path,
+            format!("`load.{key}.include` must be a string or string array"),
         )),
     }
 }

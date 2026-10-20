@@ -7,10 +7,11 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 18** — harden `examples/todo-slice` into a clickable vertical slice
-(ADR-036): register → list → create → toggle/archive → reload persists. Prior: Step 17
-auth screens (ADR-035), Step 16 mutations (ADR-034). Pipeline 1–13 + MVP 14–17 done;
-next = should-haves (include / typed client / `puddly init`).
+**Build plan Step 19** — `include` / batched relations (ADR-037): list + view `load`
+accept `include: ["project"]` (or a string); after list, one `IN (…)` batch per
+relation nests related objects on row JSON (no JOIN / no N+1). Example todo view shows
+project title. Prior: Step 18 vertical slice (ADR-036). Next = typed client /
+`puddly init`.
 
 ## Try the todo slice
 

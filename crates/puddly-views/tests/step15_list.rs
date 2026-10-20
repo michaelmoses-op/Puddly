@@ -48,6 +48,7 @@ fn parses_todos_items_map_into_ir() {
                     assert!(props.iter().any(|a| a.name == "id"));
                     assert!(props.iter().any(|a| a.name == "title"));
                     assert!(props.iter().any(|a| a.name == "done"));
+                    assert!(props.iter().any(|a| a.name == "projectTitle"));
                 }
                 other => panic!("expected island body, got {other:?}"),
             }

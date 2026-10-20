@@ -77,6 +77,7 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
                 &ctx,
                 self.book,
                 exec,
+                self.ir,
             )
             .await?;
             return Ok(RpcResponse::ok(data));

@@ -10,8 +10,9 @@ use puddly_data::{
     exec_prepared, query_prepared, PreparedKind, QueryBuilder, StatementBook,
 };
 use puddly_db::{with_transaction, DbRow, Executor, SqlValue};
-use puddly_ir::{FieldKind, LiteralValue, ResourceIr};
+use puddly_ir::{AppIr, FieldKind, LiteralValue, ResourceIr};
 use serde_json::{json, Map, Value};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub async fn handle_crud(
     resource: &ResourceIr,
@@ -20,9 +21,10 @@ pub async fn handle_crud(
     ctx: &RpcContext,
     book: &StatementBook,
     exec: &mut dyn Executor,
+    ir: &AppIr,
 ) -> RpcResult<Value> {
     match operation {
-        "list" => list(resource, body, ctx, book, exec).await,
+        "list" => list(resource, body, ctx, book, exec, ir).await,
         "get" => get(resource, body, ctx, book, exec).await,
         "create" => create(resource, body, ctx, book, exec).await,
         "update" => update(resource, body, ctx, book, exec).await,
@@ -38,8 +40,9 @@ async fn list(
     resource: &ResourceIr,
     body: &Value,
     ctx: &RpcContext,
-    _book: &StatementBook,
+    book: &StatementBook,
     exec: &mut dyn Executor,
+    ir: &AppIr,
 ) -> RpcResult<Value> {
     let rule = require_rule(resource, "list")?;
     let mut qb = QueryBuilder::for_resource(resource);
@@ -55,14 +58,141 @@ async fn list(
     }
 
     qb = apply_list_body(qb, body)?;
+    let includes = qb.includes().to_vec();
     let page = qb
         .build()
         .map_err(|e| RpcError::BadRequest(e.to_string()))?;
     let rows = exec.query(&page.sql, &page.params).await?;
+    let mut items = rows_to_json_vec(&rows);
+    if !includes.is_empty() {
+        attach_includes(resource, ir, book, &includes, &mut items, exec).await?;
+    }
     Ok(json!({
-        "items": rows_to_json(&rows),
+        "items": Value::Array(items),
         "limit": page.limit,
     }))
+}
+
+/// After list rows, batch-fetch each included ref (one query per relation — ADR-037).
+async fn attach_includes(
+    resource: &ResourceIr,
+    ir: &AppIr,
+    book: &StatementBook,
+    includes: &[String],
+    items: &mut [Value],
+    exec: &mut dyn Executor,
+) -> RpcResult<()> {
+    for relation in includes {
+        let target_name = resource
+            .fields
+            .iter()
+            .find(|f| f.name == *relation)
+            .and_then(|f| match &f.kind {
+                FieldKind::Ref { target } => Some(target.as_str()),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                RpcError::BadRequest(format!("`{relation}` is not a ref field on {}", resource.name))
+            })?;
+
+        let target = ir
+            .resources
+            .iter()
+            .find(|r| r.name == target_name)
+            .ok_or_else(|| RpcError::msg(format!("unknown include target `{target_name}`")))?;
+
+        let mut ids = BTreeSet::new();
+        for item in items.iter() {
+            if let Some(id) = item.get(relation).and_then(json_id_str) {
+                ids.insert(id);
+            }
+        }
+
+        let mut by_id: BTreeMap<String, Value> = BTreeMap::new();
+        if !ids.is_empty() {
+            let related = batch_find_by_ids(target, book, &ids, exec).await?;
+            for row in related {
+                let obj = row_to_json(&row);
+                if let Some(id) = obj.get("id").and_then(json_id_str) {
+                    by_id.insert(id, obj);
+                }
+            }
+        }
+
+        for item in items.iter_mut() {
+            let Some(obj) = item.as_object_mut() else {
+                continue;
+            };
+            let attached = match obj.get(relation).and_then(json_id_str) {
+                Some(id) => by_id.get(&id).cloned().unwrap_or(Value::Null),
+                None => Value::Null,
+            };
+            obj.insert(relation.clone(), attached);
+        }
+    }
+    Ok(())
+}
+
+/// One `SELECT … WHERE id IN ($1,…)` for the unique FK set (not N+1).
+async fn batch_find_by_ids(
+    target: &ResourceIr,
+    book: &StatementBook,
+    ids: &BTreeSet<String>,
+    exec: &mut dyn Executor,
+) -> RpcResult<Vec<DbRow>> {
+    let id_list: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    if let Some(stmt) = book.get(&target.name, PreparedKind::FindById) {
+        // Reuse select-list shape from find_by_id, rewrite WHERE to IN (…).
+        let select_sql = stmt
+            .sql
+            .split(" WHERE ")
+            .next()
+            .unwrap_or(stmt.sql.as_str());
+        let placeholders: Vec<String> = (1..=id_list.len()).map(|i| format!("${i}")).collect();
+        let sql = format!(
+            "{} WHERE {} IN ({})",
+            select_sql,
+            q("id"),
+            placeholders.join(", ")
+        );
+        let params: Vec<SqlValue> = id_list
+            .iter()
+            .map(|id| SqlValue::Uuid((*id).to_string()))
+            .collect();
+        return Ok(exec.query(&sql, &params).await?);
+    }
+
+    // Fallback when book has no find (should not happen for compiled resources).
+    let cols: Vec<&str> = target
+        .fields
+        .iter()
+        .filter(|f| !matches!(f.kind, FieldKind::Computed { .. }))
+        .map(|f| f.name.as_str())
+        .collect();
+    let select_list = cols.iter().map(|c| q(c)).collect::<Vec<_>>().join(", ");
+    let placeholders: Vec<String> = (1..=id_list.len()).map(|i| format!("${i}")).collect();
+    let sql = format!(
+        "SELECT {select_list} FROM {} WHERE {} IN ({})",
+        q(&target.name),
+        q("id"),
+        placeholders.join(", ")
+    );
+    let params: Vec<SqlValue> = id_list
+        .iter()
+        .map(|id| SqlValue::Uuid((*id).to_string()))
+        .collect();
+    Ok(exec.query(&sql, &params).await?)
+}
+
+fn json_id_str(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn q(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
 }
 
 async fn get(
@@ -379,8 +509,8 @@ fn row_to_json(row: &DbRow) -> Value {
     Value::Object(map)
 }
 
-fn rows_to_json(rows: &[DbRow]) -> Value {
-    Value::Array(rows.iter().map(row_to_json).collect())
+fn rows_to_json_vec(rows: &[DbRow]) -> Vec<Value> {
+    rows.iter().map(row_to_json).collect()
 }
 
 fn sql_to_json(v: &SqlValue) -> Value {

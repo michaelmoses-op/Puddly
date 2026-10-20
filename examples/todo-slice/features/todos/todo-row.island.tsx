@@ -2,6 +2,7 @@ export default function TodoRow(props) {
   return (
     <li class="todo-row">
       <span data-puddly-id="title">{props.title}</span>
+      <span data-puddly-id="project">{props.projectTitle}</span>
       <span data-puddly-id="done">{props.done}</span>
       <button
         type="button"
