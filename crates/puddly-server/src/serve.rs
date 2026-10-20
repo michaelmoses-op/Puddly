@@ -1,9 +1,12 @@
 //! Async bind + accept loop and single-exchange dispatch onto `RpcServer`.
 
+use crate::dev::{inject_dev_overlay_script, DevHandles, DevState, DEV_OVERLAY_JS};
 use crate::error::{ServerError, ServerResult};
 use crate::http::{
     parse_http_request, write_http_response, HttpRequest, HttpResponse,
 };
+use puddly_actions::ActionRunner;
+use puddly_auth::SessionStore;
 use puddly_core::{CSRF_HEADER_NAME, DISPLAY_NAME};
 use puddly_db::{Executor, PgPool};
 use puddly_rpc::{RpcRequest, RpcResponse, RpcServer};
@@ -41,8 +44,8 @@ pub async fn serve<S, R>(
     views: Arc<ViewBundle>,
 ) -> ServerResult<()>
 where
-    S: puddly_auth::SessionStore + Send + 'static,
-    R: puddly_actions::ActionRunner + Send + 'static,
+    S: SessionStore + Send + 'static,
+    R: ActionRunner + Send + 'static,
 {
     let listener = TcpListener::bind(&config.bind).await?;
     eprintln!(
@@ -62,6 +65,38 @@ where
     }
 }
 
+/// Dev accept loop: hot-swappable views, optional RPC pool, `/__dev` panel.
+pub async fn serve_dev<S, R>(
+    config: &ServerConfig,
+    handles: Arc<DevHandles<S, R>>,
+    pool: Option<PgPool>,
+) -> ServerResult<()>
+where
+    S: SessionStore + 'static,
+    R: ActionRunner + 'static,
+{
+    let listener = TcpListener::bind(&config.bind).await?;
+    let mode = if pool.is_some() {
+        "full (RPC + views)"
+    } else {
+        "view-only (no DATABASE_URL)"
+    };
+    eprintln!(
+        "{DISPLAY_NAME} dev listening on http://{} ({mode})",
+        config.bind
+    );
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let handles = Arc::clone(&handles);
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = handle_stream_dev(stream, &handles, pool.as_ref()).await {
+                eprintln!("request error: {e}");
+            }
+        });
+    }
+}
+
 /// Handle a single already-accepted stream (tests / one-shot) with a checked-out executor.
 pub async fn serve_once<S, R>(
     stream: &mut TcpStream,
@@ -70,8 +105,8 @@ pub async fn serve_once<S, R>(
     views: Option<&ViewBundle>,
 ) -> ServerResult<()>
 where
-    S: puddly_auth::SessionStore,
-    R: puddly_actions::ActionRunner,
+    S: SessionStore,
+    R: ActionRunner,
 {
     let http_req = parse_http_request(stream).await?;
     let http_resp = dispatch_http(&http_req, rpc, exec, views).await?;
@@ -85,8 +120,8 @@ async fn handle_stream<S, R>(
     views: &ViewBundle,
 ) -> ServerResult<()>
 where
-    S: puddly_auth::SessionStore,
-    R: puddly_actions::ActionRunner,
+    S: SessionStore,
+    R: ActionRunner,
 {
     let http_req = parse_http_request(&mut stream).await?;
 
@@ -103,11 +138,81 @@ where
     write_http_response(&mut stream, &http_resp).await
 }
 
+async fn handle_stream_dev<S, R>(
+    mut stream: TcpStream,
+    handles: &DevHandles<S, R>,
+    pool: Option<&PgPool>,
+) -> ServerResult<()>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
+    let http_req = parse_http_request(&mut stream).await?;
+
+    if let Some(http_resp) = try_dispatch_get_dev(&http_req, handles).await? {
+        return write_http_response(&mut stream, &http_resp).await;
+    }
+
+    // RPC requires pool + RpcServer.
+    let (Some(pool), Some(rpc)) = (pool, handles.rpc.as_ref()) else {
+        let resp = HttpResponse::json(
+            503,
+            "Service Unavailable",
+            &json!({
+                "ok": false,
+                "error": "RPC unavailable in view-only `puddly dev` (set DATABASE_URL)"
+            }),
+        );
+        return write_http_response(&mut stream, &resp).await;
+    };
+
+    let mut exec = pool
+        .get()
+        .await
+        .map_err(|e| ServerError::msg(e.to_string()))?;
+    let http_resp = dispatch_http(&http_req, rpc, &mut exec, None).await?;
+    write_http_response(&mut stream, &http_resp).await
+}
+
 /// Handle GET routes that do not need an [`Executor`]. Returns `None` if the request
 /// should fall through to RPC (POST) dispatch.
 pub fn try_dispatch_get(
     http_req: &HttpRequest,
     views: Option<&ViewBundle>,
+) -> ServerResult<Option<HttpResponse>> {
+    try_dispatch_get_inner(http_req, views, false)
+}
+
+/// Dev GET dispatch: `/__dev`, overlay script, hot views + error overlay injection.
+pub async fn try_dispatch_get_dev<S, R>(
+    http_req: &HttpRequest,
+    handles: &DevHandles<S, R>,
+) -> ServerResult<Option<HttpResponse>>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
+    if !http_req.method.eq_ignore_ascii_case("GET") {
+        return Ok(None);
+    }
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+
+    if path == "/__dev" {
+        let st = handles.state.read().await;
+        return Ok(Some(HttpResponse::json(200, "OK", &serde_json::to_value(st.status()).unwrap_or_else(|_| json!({ "ok": false })))));
+    }
+    if path == "/__dev/overlay.js" {
+        return Ok(Some(HttpResponse::js(200, "OK", DEV_OVERLAY_JS)));
+    }
+
+    let views = handles.views.read().await;
+    try_dispatch_get_inner(http_req, Some(&views), true)
+}
+
+fn try_dispatch_get_inner(
+    http_req: &HttpRequest,
+    views: Option<&ViewBundle>,
+    inject_overlay: bool,
 ) -> ServerResult<Option<HttpResponse>> {
     if !http_req.method.eq_ignore_ascii_case("GET") {
         return Ok(None);
@@ -123,16 +228,22 @@ pub fn try_dispatch_get(
     if let Some(bundle) = views {
         if path == "/" {
             let name = bundle.default_view_name().unwrap_or("todo");
-            return Ok(Some(render_view_response(bundle, name)?));
+            return Ok(Some(render_view_response(bundle, name, inject_overlay)?));
         }
         if let Some(name) = path.strip_prefix("/v/") {
             if !name.is_empty() && !name.contains('/') {
-                return Ok(Some(render_view_response(bundle, name)?));
+                return Ok(Some(render_view_response(bundle, name, inject_overlay)?));
             }
         }
     }
     // Unknown GET
     Ok(Some(HttpResponse::text(404, "Not Found", "not found")))
+}
+
+/// Build `/__dev` JSON from a [`DevState`] (unit-test helper; no async).
+pub fn dev_status_response(state: &DevState) -> HttpResponse {
+    let value = serde_json::to_value(state.status()).unwrap_or_else(|_| json!({ "ok": false }));
+    HttpResponse::json(200, "OK", &value)
 }
 
 /// Async dispatch used by the accept loop and unit tests.
@@ -145,8 +256,8 @@ pub async fn dispatch_http<S, R>(
     views: Option<&ViewBundle>,
 ) -> ServerResult<HttpResponse>
 where
-    S: puddly_auth::SessionStore,
-    R: puddly_actions::ActionRunner,
+    S: SessionStore,
+    R: ActionRunner,
 {
     if let Some(resp) = try_dispatch_get(http_req, views)? {
         return Ok(resp);
@@ -188,10 +299,80 @@ where
     Ok(rpc_to_http(rpc_resp))
 }
 
-fn render_view_response(bundle: &ViewBundle, name: &str) -> ServerResult<HttpResponse> {
+/// Dev-aware dispatch for tests (GET `/__dev` + views with overlay; optional RPC).
+pub async fn dispatch_http_dev<S, R>(
+    http_req: &HttpRequest,
+    handles: &DevHandles<S, R>,
+    exec: Option<&mut dyn Executor>,
+) -> ServerResult<HttpResponse>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
+    if let Some(resp) = try_dispatch_get_dev(http_req, handles).await? {
+        return Ok(resp);
+    }
+
+    if !http_req.method.eq_ignore_ascii_case("POST") {
+        return Ok(HttpResponse::text(405, "Method Not Allowed", "POST only for RPC"));
+    }
+
+    let (Some(rpc), Some(exec)) = (handles.rpc.as_ref(), exec) else {
+        return Ok(HttpResponse::json(
+            503,
+            "Service Unavailable",
+            &json!({
+                "ok": false,
+                "error": "RPC unavailable in view-only mode"
+            }),
+        ));
+    };
+
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+    let target = extract_rpc_target(path).ok_or_else(|| {
+        ServerError::BadRequest(format!(
+            "expected path /rpc/<resource>.<operation>, got {}",
+            http_req.path
+        ))
+    })?;
+
+    let body: Value = if http_req.body.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_slice(&http_req.body)
+            .map_err(|e| ServerError::BadRequest(format!("invalid JSON: {e}")))?
+    };
+
+    let mut rpc_req = RpcRequest::new(target, body);
+    for (k, v) in &http_req.headers {
+        rpc_req.headers.insert(k.clone(), v.clone());
+    }
+    if let Some(cookie) = http_req.headers.get("cookie") {
+        rpc_req.cookie_header = Some(cookie.clone());
+    }
+
+    let rpc_resp = {
+        let mut rpc = rpc.lock().await;
+        rpc.handle(&rpc_req, exec).await
+    };
+    Ok(rpc_to_http(rpc_resp))
+}
+
+fn render_view_response(
+    bundle: &ViewBundle,
+    name: &str,
+    inject_overlay: bool,
+) -> ServerResult<HttpResponse> {
     let props = demo_todo_props();
     match render_page(bundle, name, &props) {
-        Ok(html) => Ok(HttpResponse::html(200, "OK", html)),
+        Ok(html) => {
+            let html = if inject_overlay {
+                inject_dev_overlay_script(&html)
+            } else {
+                html
+            };
+            Ok(HttpResponse::html(200, "OK", html))
+        }
         Err(puddly_views::ViewError::UnknownView { name }) => Ok(HttpResponse::text(
             404,
             "Not Found",

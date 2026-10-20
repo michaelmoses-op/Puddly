@@ -86,4 +86,20 @@ impl<S: SessionStore, R: ActionRunner> RpcServer<S, R> {
         };
         rt.handle(req, exec).await
     }
+
+    /// Hot-reload IR, statement book, and action catalog (keeps sessions + runner).
+    pub fn reload_catalog(&mut self, root: &Path, ir: AppIr) -> Result<(), String> {
+        let book = statement_book_from_app(&ir);
+        let actions = catalog_from_app(root, &ir).map_err(|e| e.to_string())?;
+        self.ir = ir;
+        self.book = book;
+        self.actions = actions;
+        Ok(())
+    }
+
+    /// Reload action sources only (same IR). Used when `*.action.ts` changes.
+    pub fn reload_actions(&mut self, root: &Path) -> Result<(), String> {
+        self.actions = catalog_from_app(root, &self.ir).map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
