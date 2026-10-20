@@ -1,0 +1,19 @@
+[package]
+name = "puddly-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal sync HTTP adapter over puddly-rpc (ADR-024)"
+
+[dependencies]
+puddly-actions = { workspace = true }
+puddly-auth = { workspace = true }
+puddly-check = { workspace = true }
+puddly-core = { workspace = true }
+puddly-db = { workspace = true }
+puddly-rpc = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+puddly-db = { workspace = true }

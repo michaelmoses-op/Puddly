@@ -39,45 +39,22 @@ fn list(
     exec: &mut dyn Executor,
 ) -> RpcResult<Value> {
     let rule = require_rule(resource, "list")?;
-    // Owner/member list: must be signed in; filter applied after fetch in skeleton.
-    enforce(rule, ctx.user.as_ref(), None).or_else(|e| {
-        // Owner rule without row fails — allow past enforce only for authenticated + filter.
-        if list_owner_field(rule).is_some() {
-            if ctx.user.is_none() {
-                return Err(RpcError::Unauthorized);
-            }
-            Ok(())
-        } else {
-            Err(e)
-        }
-    })?;
+    // Owner/member list: require sign-in; inject equality predicate into SQL (Step 7).
+    // Authenticated/role: enforce without a row.
+    if let Some(field) = list_owner_field(rule) {
+        let user = ctx.user.as_ref().ok_or(RpcError::Unauthorized)?;
+        let sql = format!(
+            "SELECT * FROM \"{}\" WHERE \"{}\" = $1",
+            resource.name, field
+        );
+        let rows = exec.query(&sql, &[SqlValue::Uuid(user.id.clone())])?;
+        return Ok(json!({ "items": rows_to_json(&rows) }));
+    }
 
-    // Skeleton list: SELECT * via find is wrong; use a simple table scan SQL.
+    enforce(rule, ctx.user.as_ref(), None)?;
     let sql = format!("SELECT * FROM \"{}\"", resource.name);
     let rows = exec.query(&sql, &[])?;
-    let filtered = filter_list_rows(rows, rule, ctx);
-    Ok(json!({ "items": rows_to_json(&filtered) }))
-}
-
-fn filter_list_rows(
-    rows: Vec<DbRow>,
-    rule: &puddly_ir::RuleIr,
-    ctx: &RpcContext,
-) -> Vec<DbRow> {
-    let Some(field) = list_owner_field(rule) else {
-        return rows;
-    };
-    let Some(user) = &ctx.user else {
-        return Vec::new();
-    };
-    rows.into_iter()
-        .filter(|row| {
-            row.get(field)
-                .and_then(|v| v.as_text())
-                .map(|id| id == user.id)
-                .unwrap_or(false)
-        })
-        .collect()
+    Ok(json!({ "items": rows_to_json(&rows) }))
 }
 
 fn get(

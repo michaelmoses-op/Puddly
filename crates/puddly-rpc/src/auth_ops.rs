@@ -3,7 +3,7 @@
 use crate::error::{RpcError, RpcResult};
 use crate::request::RpcResponse;
 use puddly_auth::{
-    clear_session_cookie_header, session_cookie_header, AuthProvider, AuthUser,
+    clear_session_cookie_header, generate_user_id, session_cookie_header, AuthProvider, AuthUser,
     EmailPasswordProvider, RegisterInput, SessionStore, SESSION_TTL_SECS,
 };
 use puddly_db::Executor;
@@ -38,11 +38,14 @@ fn register<S: SessionStore>(
         .get("password")
         .and_then(|v| v.as_str())
         .ok_or_else(|| RpcError::BadRequest("password required".into()))?;
+    // Optional userId (Step 5/6 lock B): generate a UUID when omitted.
     let user_id = body
         .get("userId")
         .or_else(|| body.get("user_id"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| RpcError::BadRequest("userId required (caller-supplied)".into()))?;
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(generate_user_id);
     let roles = body
         .get("roles")
         .and_then(|v| v.as_array())
@@ -57,7 +60,7 @@ fn register<S: SessionStore>(
     let user = provider.register(RegisterInput {
         email: email.to_string(),
         password: password.to_string(),
-        user_id: user_id.to_string(),
+        user_id,
         roles,
     })?;
     // Auto-login after register
