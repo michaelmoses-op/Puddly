@@ -18,7 +18,9 @@ use puddly_query::{
 };
 use puddly_actions::ACTION_SIDECAR_ENV;
 use puddly_rpc::RpcServer;
-use puddly_server::{serve, ServerConfig};
+use puddly_server::{
+    errors_from_check, serve, serve_dev, watch_dev_loop, DevHandles, DevState, ServerConfig,
+};
 use puddly_views::ViewBundle;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -94,6 +96,21 @@ enum Commands {
         #[arg(long)]
         database_url: Option<String>,
         /// Set Secure on session cookies
+        #[arg(long)]
+        secure_cookies: bool,
+    },
+    /// Incremental compile + hot reload + `/__dev` panel (ADR-018 / ADR-030)
+    Dev {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Bind address (default 127.0.0.1:3000)
+        #[arg(long, default_value = "127.0.0.1:3000")]
+        bind: String,
+        /// Postgres URL (defaults to $DATABASE_URL). Optional: without it, serve
+        /// views + `/__dev` only (no RPC pool).
+        #[arg(long)]
+        database_url: Option<String>,
+        /// Set Secure on session cookies (ignored in view-only mode)
         #[arg(long)]
         secure_cookies: bool,
     },
@@ -445,6 +462,92 @@ async fn main() -> ExitCode {
                 secure_cookies,
             };
             match serve(&config, Arc::new(Mutex::new(rpc)), pool, views).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        Commands::Dev {
+            path,
+            bind,
+            database_url,
+            secure_cookies,
+        } => {
+            let url = database_url
+                .or_else(|| std::env::var("DATABASE_URL").ok())
+                .filter(|s| !s.is_empty());
+
+            let views = match ViewBundle::load(&path) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("error: loading views: {e}");
+                    return ExitCode::from(1);
+                }
+            };
+            let mut state = DevState::new(path.clone());
+            state.mark_reload();
+
+            let (rpc, pool) = if let Some(url) = url {
+                let result = check(&path);
+                if !result.ok {
+                    // Still start in a degraded way? Prefer fail-fast when DB mode requested.
+                    print_out(&format_check(&result, false));
+                    return ExitCode::from(1);
+                }
+                let ir = result.ir.expect("ok implies ir");
+                let mut rpc = match RpcServer::from_app_with_sidecar(&path, ir) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(1);
+                    }
+                };
+                if !rpc.runner.is_configured() {
+                    eprintln!(
+                        "warning: action sidecar not configured — set {ACTION_SIDECAR_ENV} or keep tools/puddly-action-sidecar.mjs"
+                    );
+                }
+                rpc.secure_cookies = secure_cookies;
+                let pool = match PgPool::connect(&PoolConfig::from_url(&url)).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(1);
+                    }
+                };
+                (Some(rpc), Some(pool))
+            } else {
+                eprintln!(
+                    "{DISPLAY_NAME} dev: no DATABASE_URL — view-only mode (SSR + /__dev; RPC disabled)"
+                );
+                // Soft-check resources for initial /__dev state (do not fail startup).
+                let result = check(&path);
+                if !result.ok {
+                    state.ok = false;
+                    state.errors = errors_from_check(&result);
+                    eprintln!("{DISPLAY_NAME} check: initial diagnostics present (see /__dev)");
+                }
+                (None, None)
+            };
+
+            let handles = Arc::new(DevHandles::new(views, state, rpc));
+            let config = ServerConfig {
+                bind: bind.clone(),
+                root: path.clone(),
+                secure_cookies,
+            };
+
+            let watch_handles = Arc::clone(&handles);
+            let watch_root = path.clone();
+            tokio::spawn(async move {
+                if let Err(e) = watch_dev_loop(watch_root, watch_handles).await {
+                    eprintln!("error: watcher stopped: {e}");
+                }
+            });
+
+            match serve_dev(&config, handles, pool).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("error: {e}");
