@@ -200,6 +200,12 @@ async fn register_create_update_archive_loop() {
     let archive_resp = rt.handle(&archive, &mut exec).await;
     assert!(archive_resp.ok, "{archive_resp:?}");
     assert_eq!(archive_resp.data.unwrap()["archived"], todo_id);
+    assert!(
+        exec.log
+            .iter()
+            .any(|q| q.kind == "execute" && q.sql.contains("DELETE FROM \"todo\"")),
+        "Step 18: archive persists via DELETE"
+    );
 }
 
 #[test]

@@ -9,7 +9,7 @@ use crate::error::{RpcError, RpcResult};
 use crate::request::{RpcRequest, RpcResponse, RpcTarget};
 use puddly_actions::{ActionCall, ActionCatalog, ActionRunner, IpcUser};
 use puddly_auth::{AuthUser, SessionStore};
-use puddly_data::{query_prepared, PreparedKind, StatementBook};
+use puddly_data::{exec_prepared, query_prepared, PreparedKind, StatementBook};
 use puddly_db::{Executor, SqlValue};
 use puddly_ir::{ActionIr, AppIr, ResourceIr};
 use serde_json::Value;
@@ -109,6 +109,19 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
                     user: ctx.user.as_ref().map(auth_user_to_ipc),
                 })
                 .await?;
+            // Archive actions historically returned metadata only; persist by deleting
+            // the owner-checked row so the list view updates (ADR-036).
+            if target.operation == "archive" {
+                if let Some(id) = req.body.get("id").and_then(|v| v.as_str()) {
+                    let stmt = self
+                        .book
+                        .get(&resource.name, PreparedKind::DeleteById)
+                        .ok_or_else(|| {
+                            RpcError::msg(format!("no delete statement for {}", resource.name))
+                        })?;
+                    exec_prepared(exec, stmt, &[SqlValue::Uuid(id.to_string())]).await?;
+                }
+            }
             return Ok(RpcResponse::ok(data));
         }
 

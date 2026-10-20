@@ -69,9 +69,21 @@ pub fn compile_resource_statements(r: &ResourceIr) -> Vec<PreparedStatement> {
         param_names: vec!["id".into()],
     };
 
-    // Include all persisted columns (including id) for explicit inserts.
-    let insert_list = cols.iter().map(|c| q(c)).collect::<Vec<_>>().join(", ");
-    let placeholders = (1..=cols.len())
+    // Persist columns for INSERT, omitting `auto: true` fields so Postgres DEFAULT
+    // (e.g. `createdAt DEFAULT now()`) applies — ADR-036 / Step 16 open-q B.
+    let insert_cols: Vec<&str> = r
+        .fields
+        .iter()
+        .filter(|f| !matches!(f.kind, FieldKind::Computed { .. }))
+        .filter(|f| f.options.auto != Some(true))
+        .map(|f| f.name.as_str())
+        .collect();
+    let insert_list = insert_cols
+        .iter()
+        .map(|c| q(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = (1..=insert_cols.len())
         .map(|i| format!("${i}"))
         .collect::<Vec<_>>()
         .join(", ");
@@ -80,7 +92,7 @@ pub fn compile_resource_statements(r: &ResourceIr) -> Vec<PreparedStatement> {
         resource: r.name.clone(),
         kind: PreparedKind::Insert,
         sql: format!("INSERT INTO {table} ({insert_list}) VALUES ({placeholders})"),
-        param_names: cols.iter().map(|s| (*s).to_string()).collect(),
+        param_names: insert_cols.iter().map(|s| (*s).to_string()).collect(),
     };
 
     let set_cols: Vec<&str> = cols.iter().copied().filter(|c| *c != "id").collect();
