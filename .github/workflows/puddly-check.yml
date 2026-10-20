@@ -18,5 +18,7 @@ jobs:
         run: cargo run -p puddly-cli -- check examples/todo-slice
       - name: Fail on stale committed manifest
         run: cargo run -p puddly-cli -- manifest check examples/todo-slice
+      - name: Fail on schema / migration drift
+        run: cargo run -p puddly-cli -- migrate check examples/todo-slice
       - name: Unit / integration tests
         run: cargo test --workspace

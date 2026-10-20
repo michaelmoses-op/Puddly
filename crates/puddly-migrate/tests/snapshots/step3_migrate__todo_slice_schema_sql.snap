@@ -1,0 +1,43 @@
+---
+source: crates/puddly-migrate/tests/step3_migrate.rs
+expression: sql
+---
+-- Full schema (postgres)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE "project" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "title" VARCHAR(200) NOT NULL,
+  "owner" UUID NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY ("id")
+);
+
+CREATE TABLE "todo" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "title" VARCHAR(200) NOT NULL,
+  "done" BOOLEAN NOT NULL DEFAULT false,
+  "dueDate" DATE,
+  "project" UUID NOT NULL,
+  "owner" UUID NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY ("id")
+);
+
+CREATE TABLE "user" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "email" VARCHAR(320) NOT NULL,
+  "name" VARCHAR(120) NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY ("id")
+);
+
+ALTER TABLE "project" ADD CONSTRAINT "fk_project_owner" FOREIGN KEY ("owner") REFERENCES "user"("id");
+ALTER TABLE "todo" ADD CONSTRAINT "fk_todo_owner" FOREIGN KEY ("owner") REFERENCES "user"("id");
+ALTER TABLE "todo" ADD CONSTRAINT "fk_todo_project" FOREIGN KEY ("project") REFERENCES "project"("id");
+CREATE INDEX "idx_project_createdAt" ON "project" ("createdAt");
+CREATE INDEX "idx_todo_createdAt" ON "todo" ("createdAt");
+CREATE INDEX "idx_todo_done" ON "todo" ("done");
+CREATE INDEX "idx_todo_dueDate" ON "todo" ("dueDate");
+CREATE INDEX "idx_user_createdAt" ON "user" ("createdAt");
+CREATE INDEX "idx_user_email" ON "user" ("email");

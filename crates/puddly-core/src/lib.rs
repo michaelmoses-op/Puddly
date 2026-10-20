@@ -4,4 +4,4 @@
 
 pub mod identity;
 
-pub use identity::{CLI_NAME, DISPLAY_NAME, MANIFEST_DIR, MANIFEST_FILE};
+pub use identity::{CLI_NAME, DISPLAY_NAME, MANIFEST_DIR, MANIFEST_FILE, MIGRATIONS_DIR};
