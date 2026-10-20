@@ -25,8 +25,10 @@ cargo run -p puddly-cli -- migrate apply examples/todo-slice
 cargo run -p puddly-cli -- auth scaffold examples/todo-slice
 # Then apply that new migration the same way (migrate apply / psql).
 
-# 2) Package the action sidecar into .puddly/generated/
+# 2) Package action sidecar + typed client into .puddly/generated/
 cargo run -p puddly-cli -- build examples/todo-slice
+# Or client only: cargo run -p puddly-cli -- client generate examples/todo-slice
+# See client/ for a committed snapshot of the generated API shape.
 
 # 3) Serve (or use `dev` for hot reload)
 cargo run -p puddly-cli -- serve examples/todo-slice --bind 127.0.0.1:3000
