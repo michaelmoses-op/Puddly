@@ -175,8 +175,50 @@
     return null;
   }
 
+  /** Prefer an existing `[data-puddly-error]` near the control; create one if needed. */
+  function errorHost(el) {
+    var form = el.closest ? el.closest("form") : null;
+    var scope = form || (el.parentNode && el.parentNode.querySelector ? el.parentNode : null);
+    var root = document;
+    var box =
+      (scope && scope.querySelector && scope.querySelector("[data-puddly-error]")) ||
+      (root && root.querySelector && root.querySelector("main [data-puddly-error]")) ||
+      (root && root.querySelector && root.querySelector("[data-puddly-error]"));
+    if (box) return box;
+    if (!el.parentNode || typeof document === "undefined") return null;
+    box = document.createElement("p");
+    box.setAttribute("data-puddly-error", "");
+    box.className = "puddly-error";
+    if (form) {
+      form.insertBefore(box, form.firstChild);
+    } else {
+      el.parentNode.insertBefore(box, el);
+    }
+    return box;
+  }
+
+  function showRpcError(el, err) {
+    var box = errorHost(el);
+    var msg =
+      err && err.message
+        ? String(err.message)
+        : err
+          ? String(err)
+          : "Request failed";
+    if (box) box.textContent = msg;
+    if (typeof console !== "undefined" && console.error) {
+      console.error("puddly rpc failed", err || msg);
+    }
+  }
+
+  function clearRpcError(el) {
+    var box = errorHost(el);
+    if (box) box.textContent = "";
+  }
+
   function afterRpc(el, result) {
     if (result && result.ok) {
+      clearRpcError(el);
       var dest = redirectTarget(el);
       if (dest != null && typeof location !== "undefined") {
         location.assign(dest);
@@ -185,8 +227,8 @@
       if (shouldReload(el) && typeof location !== "undefined") {
         location.reload();
       }
-    } else if (typeof console !== "undefined" && console.error) {
-      console.error("puddly rpc failed", result && result.error ? result.error : result);
+    } else {
+      showRpcError(el, result && result.error ? result.error : result);
     }
     return result;
   }

@@ -7,11 +7,15 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 17** — auth screens (ADR-035): `GET /login` + `GET /register` HTML
-forms call `auth.login` / `auth.register` via `data-puddly-rpc` (CSRF + cookies);
-`data-puddly-redirect="/"` after success; 401 pages link to `/login`; todo view
-optional logout. Prior: Step 16 mutation loop (ADR-034), view `load` (ADR-032),
-list `.map` (ADR-033). Pipeline 1–13 complete; next = harden example (Step 18).
+**Build plan Step 18** — harden `examples/todo-slice` into a clickable vertical slice
+(ADR-036): register → list → create → toggle/archive → reload persists. Prior: Step 17
+auth screens (ADR-035), Step 16 mutations (ADR-034). Pipeline 1–13 + MVP 14–17 done;
+next = should-haves (include / typed client / `puddly init`).
+
+## Try the todo slice
+
+Human click-path (Postgres + Node 22+): see **[`examples/todo-slice/README.md`](examples/todo-slice/README.md)** —
+migrate apply → `puddly build` → `puddly serve` → open `/register`.
 
 ## Quick start
 

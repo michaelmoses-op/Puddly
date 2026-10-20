@@ -96,7 +96,12 @@ async fn create(
 ) -> RpcResult<Value> {
     let rule = require_rule(resource, "create")?;
     enforce(rule, ctx.user.as_ref(), None)?;
-    let body = prepare_create_body(resource, body, ctx.user.as_ref())?;
+    let mut body = prepare_create_body(resource, body, ctx.user.as_ref())?;
+    // When `project` is omitted on create, ensure a personal project for the owner
+    // (ADR-036) so the example form does not need a magic hidden UUID.
+    if let Some(user) = ctx.user.as_ref() {
+        ensure_default_project(resource, &mut body, user, book, exec).await?;
+    }
     let stmt = book
         .get(&resource.name, PreparedKind::Insert)
         .ok_or_else(|| RpcError::msg(format!("no insert statement for {}", resource.name)))?
@@ -111,6 +116,60 @@ async fn create(
     })
     .await?;
     Ok(json!({ "created": true, "id": body.get("id").cloned().unwrap_or(Value::Null) }))
+}
+
+/// If `resource` has a required `project` ref and the body omits it, reuse or create
+/// a personal project owned by `user`.
+async fn ensure_default_project(
+    resource: &ResourceIr,
+    body: &mut Value,
+    user: &AuthUser,
+    book: &StatementBook,
+    exec: &mut dyn Executor,
+) -> RpcResult<()> {
+    let has_project_ref = resource.fields.iter().any(|f| {
+        f.name == "project" && matches!(f.kind, FieldKind::Ref { ref target } if target == "project")
+    });
+    if !has_project_ref {
+        return Ok(());
+    }
+    let obj = body
+        .as_object_mut()
+        .ok_or_else(|| RpcError::BadRequest("body must be an object".into()))?;
+    if !value_missing(obj.get("project")) {
+        return Ok(());
+    }
+
+    let existing = exec
+        .query(
+            "SELECT \"id\" FROM \"project\" WHERE \"owner\" = $1 LIMIT 1",
+            &[SqlValue::Uuid(user.id.clone())],
+        )
+        .await?;
+    if let Some(row) = existing.first() {
+        if let Some(id) = row.get("id").and_then(|v| match v {
+            SqlValue::Uuid(s) | SqlValue::Text(s) => Some(s.clone()),
+            _ => None,
+        }) {
+            obj.insert("project".into(), Value::String(id));
+            return Ok(());
+        }
+    }
+
+    let project_id = generate_user_id();
+    let project_body = json!({
+        "id": project_id,
+        "title": "Personal",
+        "owner": user.id,
+    });
+    let stmt = book
+        .get("project", PreparedKind::Insert)
+        .ok_or_else(|| RpcError::msg("no insert statement for project"))?
+        .clone();
+    let params = params_for_insert(&stmt, &project_body)?;
+    exec_prepared(exec, &stmt, &params).await?;
+    obj.insert("project".into(), Value::String(project_id));
+    Ok(())
 }
 
 async fn update(
