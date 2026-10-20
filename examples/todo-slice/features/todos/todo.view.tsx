@@ -13,9 +13,23 @@ export default function TodoView(props) {
       <body>
         <main class="todo-app">
           <h1>{props.heading}</h1>
+          <form data-puddly-rpc="todo.create" class="todo-create">
+            <input name="title" type="text" placeholder="New todo" />
+            <input
+              name="project"
+              type="hidden"
+              value="00000000-0000-4000-8000-000000000001"
+            />
+            <button type="submit">Add</button>
+          </form>
           <ul class="todo-list">
             {props.todos.items.map((item) => (
-              <TodoRow key={item.id} title={item.title} done={item.done} />
+              <TodoRow
+                key={item.id}
+                id={item.id}
+                title={item.title}
+                done={item.done}
+              />
             ))}
           </ul>
         </main>
