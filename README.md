@@ -7,9 +7,10 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 14** — declarative view `load` + session auth (ADR-032): views declare
-`export const load = { … }`; SSR props come from resource CRUD (not fixture props);
-anonymous → 401 HTML. Pipeline 1–13 complete; MVP track starts at Step 14.
+**Build plan Step 15** — list dialect (ADR-033): `{props.todos.items.map((item) =>
+<TodoRow … />)}` lowers to `NodeIr::Map` and SSR-binds each element; Step 14 scalar
+island bridge removed. Views still declare `export const load` (ADR-032); anonymous →
+401 HTML. Pipeline 1–13 complete; MVP track through Step 15.
 
 ## Quick start
 

@@ -1,11 +1,12 @@
-//! Puddly views / islands vertical slice (ADR-007, ADR-029, ADR-032).
+//! Puddly views / islands vertical slice (ADR-007, ADR-029, ADR-032, ADR-033).
 //!
 //! Discovers `*.view.tsx` + `*.island.tsx`, Oxc-parses a restricted TSX dialect,
 //! and SSR-renders HTML with island placeholders. Client JS is limited to
 //! [`ssr::ISLANDS_RUNTIME_JS`] (no React / VDOM).
 //!
 //! Views may declare `export const load = { … }` ([`LoadSpec`]); the server runs
-//! resource CRUD and passes results as SSR props (ADR-032).
+//! resource CRUD and passes results as SSR props (ADR-032). Collections render via
+//! `{props.x.items.map((item) => <…/>)}` ([`NodeIr::Map`], ADR-033).
 //!
 //! See module docs on [`ir`] for the accepted dialect.
 
@@ -25,8 +26,8 @@ pub use ir::{
     Attr, AttrValue, CompiledModule, LoadEntry, LoadSource, LoadSpec, ModuleKind, NodeIr, PropPath,
 };
 pub use ssr::{
-    apply_todo_island_bridge, demo_todo_props, render_page, render_view_chunks, render_view_html,
-    wrap_document, RenderChunks, ISLANDS_RUNTIME_JS,
+    demo_todo_props, render_page, render_view_chunks, render_view_html, wrap_document,
+    RenderChunks, ISLANDS_RUNTIME_JS,
 };
 
 use parse::parse_module_path;

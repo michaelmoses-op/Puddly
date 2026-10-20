@@ -11,7 +11,9 @@
 //!   return (
 //!     <div class="shell">
 //!       <h1>{props.heading}</h1>
-//!       <IslandTag title={props.title} done={props.done} />
+//!       {props.todos.items.map((item) => (
+//!         <IslandTag key={item.id} title={item.title} done={item.done} />
+//!       ))}
 //!     </div>
 //!   );
 //! }
@@ -21,8 +23,9 @@
 //! - Optional `export const load = { … }` (views; see [`LoadSpec`])
 //! - `export default function …(props) { return <jsx>; }`
 //! - HTML elements (lowercase) and island tags (PascalCase)
-//! - Text nodes and `{ident}` / `{props.ident}` expressions
+//! - Text nodes and `{ident}` / `{props.ident}` / `{item.field}` expressions
 //! - String attributes and `{expr}` attribute values
+//! - One-level `{expr.map((ident) => <jsx/>)}` → [`NodeIr::Map`] (ADR-033)
 //! - Optional `data-puddly-id` (preserved; also auto-assigned for text exprs)
 //!
 //! Not yet: full JS, hooks, VDOM, spreads, computed keys, nested maps, `live: true`.
@@ -125,6 +128,16 @@ pub enum NodeIr {
         path: PropPath,
         /// Stable id for fine-grained client patches (`data-puddly-id`).
         puddly_id: String,
+    },
+    /// `{items.map((item) => <jsx/>)}` — one-level list dialect (ADR-033).
+    Map {
+        /// Path to the array (or list payload `{ items: [...] }`).
+        items: PropPath,
+        /// Arrow parameter name bound into each iteration's props scope.
+        item_ident: String,
+        /// Optional `key={…}` → `data-puddly-key` on emitted element/island wrapper.
+        key: Option<PropPath>,
+        body: Box<NodeIr>,
     },
 }
 

@@ -67,50 +67,146 @@ fn emit_node(
             children,
             self_closing,
         } => {
-            let mut open = format!("<{tag}");
-            for attr in attrs {
-                open.push(' ');
-                open.push_str(&attr.name);
-                open.push_str("=\"");
-                open.push_str(&escape_attr(&attr_string(attr, props)));
-                open.push('"');
-            }
-            if *self_closing || is_void(tag) {
-                open.push_str(" />");
-                out.push_back(open.into_bytes());
-            } else {
-                open.push('>');
-                out.push_back(open.into_bytes());
-                for child in children {
-                    emit_node(child, props, bundle, out)?;
-                }
-                out.push_back(format!("</{tag}>").into_bytes());
-            }
+            emit_element(tag, attrs, children, *self_closing, props, None, bundle, out)?;
         }
         NodeIr::Island {
             name,
             props: island_attrs,
         } => {
-            let island = bundle
-                .islands
-                .get(name)
-                .ok_or_else(|| ViewError::UnknownIsland {
-                    name: name.clone(),
-                })?;
-            let island_props = attrs_to_json(island_attrs, props);
-            let props_json = serde_json::to_string(&island_props)
-                .map_err(|e| ViewError::Render(e.to_string()))?;
-            let open = format!(
-                "<div data-puddly-island=\"{}\" data-puddly-props=\"{}\">",
-                escape_attr(name),
-                escape_attr(&props_json)
-            );
-            out.push_back(open.into_bytes());
-            emit_node(&island.root, &island_props, bundle, out)?;
-            out.push_back(b"</div>".to_vec());
+            emit_island(name, island_attrs, props, None, bundle, out)?;
+        }
+        NodeIr::Map {
+            items,
+            item_ident,
+            key,
+            body,
+        } => {
+            for elem in resolve_array(items, props) {
+                let child_props = bind_item(props, item_ident, &elem);
+                let key_val = key
+                    .as_ref()
+                    .map(|k| resolve_text(k, &child_props))
+                    .filter(|s| !s.is_empty());
+                emit_map_body(body, &child_props, key_val.as_deref(), bundle, out)?;
+            }
         }
     }
     Ok(())
+}
+
+fn emit_map_body(
+    body: &NodeIr,
+    props: &Value,
+    key: Option<&str>,
+    bundle: &ViewBundle,
+    out: &mut VecDeque<Vec<u8>>,
+) -> ViewResult<()> {
+    match body {
+        NodeIr::Element {
+            tag,
+            attrs,
+            children,
+            self_closing,
+        } => emit_element(tag, attrs, children, *self_closing, props, key, bundle, out),
+        NodeIr::Island {
+            name,
+            props: island_attrs,
+        } => emit_island(name, island_attrs, props, key, bundle, out),
+        other => emit_node(other, props, bundle, out),
+    }
+}
+
+fn emit_element(
+    tag: &str,
+    attrs: &[Attr],
+    children: &[NodeIr],
+    self_closing: bool,
+    props: &Value,
+    key: Option<&str>,
+    bundle: &ViewBundle,
+    out: &mut VecDeque<Vec<u8>>,
+) -> ViewResult<()> {
+    let mut open = format!("<{tag}");
+    if let Some(k) = key {
+        open.push_str(" data-puddly-key=\"");
+        open.push_str(&escape_attr(k));
+        open.push('"');
+    }
+    for attr in attrs {
+        open.push(' ');
+        open.push_str(&attr.name);
+        open.push_str("=\"");
+        open.push_str(&escape_attr(&attr_string(attr, props)));
+        open.push('"');
+    }
+    if self_closing || is_void(tag) {
+        open.push_str(" />");
+        out.push_back(open.into_bytes());
+    } else {
+        open.push('>');
+        out.push_back(open.into_bytes());
+        for child in children {
+            emit_node(child, props, bundle, out)?;
+        }
+        out.push_back(format!("</{tag}>").into_bytes());
+    }
+    Ok(())
+}
+
+fn emit_island(
+    name: &str,
+    island_attrs: &[Attr],
+    props: &Value,
+    key: Option<&str>,
+    bundle: &ViewBundle,
+    out: &mut VecDeque<Vec<u8>>,
+) -> ViewResult<()> {
+    let island = bundle
+        .islands
+        .get(name)
+        .ok_or_else(|| ViewError::UnknownIsland {
+            name: name.to_string(),
+        })?;
+    let island_props = attrs_to_json(island_attrs, props);
+    let props_json =
+        serde_json::to_string(&island_props).map_err(|e| ViewError::Render(e.to_string()))?;
+    let mut open = format!(
+        "<div data-puddly-island=\"{}\" data-puddly-props=\"{}\"",
+        escape_attr(name),
+        escape_attr(&props_json)
+    );
+    if let Some(k) = key {
+        open.push_str(" data-puddly-key=\"");
+        open.push_str(&escape_attr(k));
+        open.push('"');
+    }
+    open.push('>');
+    out.push_back(open.into_bytes());
+    emit_node(&island.root, &island_props, bundle, out)?;
+    out.push_back(b"</div>".to_vec());
+    Ok(())
+}
+
+/// Resolve a map source: bare array, or `{ items: [...] }` list-RPC payload.
+fn resolve_array(path: &PropPath, props: &Value) -> Vec<Value> {
+    match path.resolve(props) {
+        Some(Value::Array(a)) => a.clone(),
+        Some(Value::Object(o)) => match o.get("items") {
+            Some(Value::Array(a)) => a.clone(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Merge parent props with `{ item_ident: element }` (child binding wins for that key).
+fn bind_item(parent: &Value, item_ident: &str, element: &Value) -> Value {
+    let mut map = match parent {
+        Value::Object(o) => o.clone(),
+        _ => serde_json::Map::new(),
+    };
+    map.insert(item_ident.to_string(), element.clone());
+    Value::Object(map)
 }
 
 fn attrs_to_json(attrs: &[Attr], parent: &Value) -> Value {
@@ -178,34 +274,13 @@ fn is_void(tag: &str) -> bool {
 pub fn demo_todo_props() -> Value {
     serde_json::json!({
         "heading": "Todos",
-        "title": "Buy milk",
-        "done": false
+        "todos": {
+            "items": [
+                { "id": "demo-1", "title": "Buy milk", "done": false }
+            ],
+            "limit": 50
+        }
     })
-}
-
-/// Temporary Step 14 bridge: islands need scalar props until the list dialect (Step 15).
-///
-/// Keeps `todos` (full list payload) and, when `todos.items[0]` exists, also sets
-/// top-level `title` / `done` for the existing `TodoRow` island.
-pub fn apply_todo_island_bridge(props: &mut Value) {
-    let Some(obj) = props.as_object_mut() else {
-        return;
-    };
-    let Some(first) = obj
-        .get("todos")
-        .and_then(|t| t.get("items"))
-        .and_then(|items| items.as_array())
-        .and_then(|arr| arr.first())
-        .cloned()
-    else {
-        return;
-    };
-    if let Some(title) = first.get("title").cloned() {
-        obj.insert("title".into(), title);
-    }
-    if let Some(done) = first.get("done").cloned() {
-        obj.insert("done".into(), done);
-    }
 }
 
 /// Wrap a body fragment in a minimal HTML document + island runtime script.

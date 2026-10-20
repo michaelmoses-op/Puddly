@@ -28,10 +28,10 @@ fn load_rpc() -> RpcServer {
     RpcServer::from_app(&root, ir).expect("rpc")
 }
 
-fn canned_todo_row() -> DbRow {
+fn canned_todo_row(id: &str, title: &str) -> DbRow {
     let mut row = DbRow::new();
-    row.insert("id", SqlValue::Uuid("t-from-db".into()));
-    row.insert("title", SqlValue::Text("From DB".into()));
+    row.insert("id", SqlValue::Uuid(id.into()));
+    row.insert("title", SqlValue::Text(title.into()));
     row.insert("done", SqlValue::Bool(false));
     row.insert("owner", SqlValue::Uuid("owner-1".into()));
     row
@@ -45,7 +45,10 @@ async fn authenticated_view_load_renders_canned_title() {
     let rpc = Mutex::new(rpc);
 
     let mut exec = RecordingExecutor::new();
-    exec.push_canned(vec![canned_todo_row()]);
+    exec.push_canned(vec![
+        canned_todo_row("t-from-db", "From DB"),
+        canned_todo_row("t-two", "Second row"),
+    ]);
 
     let views = ViewBundle::load(&example_root()).expect("views");
     let mut headers = BTreeMap::new();
@@ -65,9 +68,15 @@ async fn authenticated_view_load_renders_canned_title() {
     assert_eq!(resp.status, 200, "{}", String::from_utf8_lossy(&resp.body));
     let body = String::from_utf8_lossy(&resp.body);
     assert!(body.contains("From DB"), "expected canned title:\n{body}");
+    assert!(body.contains("Second row"), "expected second item:\n{body}");
     assert!(!body.contains("Buy milk"), "fixture title must not appear:\n{body}");
     assert!(body.contains("Todos"), "{body}");
-    assert!(body.contains("data-puddly-island=\"TodoRow\""), "{body}");
+    assert_eq!(
+        body.matches("data-puddly-island=\"TodoRow\"").count(),
+        2,
+        "list dialect should render one island per item:\n{body}"
+    );
+    assert!(body.contains("data-puddly-key=\"t-from-db\""), "{body}");
     assert!(
         exec.log.iter().any(|q| q.sql.contains("SELECT")),
         "load must hit list SQL: {:?}",
