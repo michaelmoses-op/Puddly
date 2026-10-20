@@ -1,6 +1,7 @@
 //! Puddly CLI. Every command is a thin wrapper over a library function.
 
 use clap::{Parser, Subcommand};
+use puddly_auth::scaffold_auth_migration;
 use puddly_check::{check, format_check};
 use puddly_core::{CLI_NAME, DISPLAY_NAME};
 use puddly_diagnostics::explain_text;
@@ -71,6 +72,11 @@ enum Commands {
         #[command(subcommand)]
         command: MigrateCmd,
     },
+    /// Built-in auth helpers (opt-in DDL scaffold)
+    Auth {
+        #[command(subcommand)]
+        command: AuthCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -116,6 +122,15 @@ enum MigrateCmd {
         /// List pending migrations without executing SQL or writing the ledger
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AuthCmd {
+    /// Commit opt-in `migrations/*_puddly_auth.sql` from `AUTH_SCHEMA_SQL`
+    Scaffold {
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -342,6 +357,18 @@ fn main() -> ExitCode {
                     }
                 }
             }
+        },
+        Commands::Auth { command } => match command {
+            AuthCmd::Scaffold { path } => match scaffold_auth_migration(&path) {
+                Ok(r) => {
+                    println!("{DISPLAY_NAME} auth: {}", r.message);
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(1)
+                }
+            },
         },
     }
 }

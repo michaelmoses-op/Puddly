@@ -1,0 +1,20 @@
+[package]
+name = "puddly-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Puddly RPC skeleton: dispatch, CSRF, auth context, access enforcement"
+
+[dependencies]
+puddly-actions = { workspace = true }
+puddly-auth = { workspace = true }
+puddly-core = { workspace = true }
+puddly-data = { workspace = true }
+puddly-db = { workspace = true }
+puddly-ir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+puddly-check = { workspace = true }

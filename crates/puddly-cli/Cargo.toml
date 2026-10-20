@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
+puddly-auth = { workspace = true }
 puddly-check = { workspace = true }
 puddly-core = { workspace = true }
 puddly-db = { workspace = true }
