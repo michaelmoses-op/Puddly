@@ -1,35 +1,35 @@
-# Mochi
+# Puddly
 
-Server-first web framework (working name). CLI: `mochi`.
+Server-first web framework (working name). CLI: `puddly`.
 
 Display name and CLI binary are defined in one place:
-[`crates/mochi-core/src/identity.rs`](crates/mochi-core/src/identity.rs).
+[`crates/puddly-core/src/identity.rs`](crates/puddly-core/src/identity.rs).
 
 ## Status
 
-**Build plan Step 1** — parse `*.resource.ts` → validate → IR, with `mochi check [--json]`
-and `mochi explain <code>`.
+**Build plan Step 1** — parse `*.resource.ts` → validate → IR, with `puddly check [--json]`
+and `puddly explain <code>`.
 
 ## Quick start
 
 ```bash
-cargo run -p mochi-cli -- check examples/todo-slice
-cargo run -p mochi-cli -- check examples/todo-slice --json
-cargo run -p mochi-cli -- explain E0204
-cargo test -p mochi-check
+cargo run -p puddly-cli -- check examples/todo-slice
+cargo run -p puddly-cli -- check examples/todo-slice --json
+cargo run -p puddly-cli -- explain E0204
+cargo test -p puddly-check
 ```
 
 ## Workspace
 
 ```
 crates/
-  mochi-core/         # identity constants
-  mochi-diagnostics/  # codes, rendering, explain registry
-  mochi-ir/           # owned IR
-  mochi-parse/        # Oxc-backed *.resource.ts parser
-  mochi-validate/     # cross-file validation
-  mochi-check/        # library entry for `check`
-  mochi-cli/          # `mochi` binary
+  puddly-core/         # identity constants
+  puddly-diagnostics/  # codes, rendering, explain registry
+  puddly-ir/           # owned IR
+  puddly-parse/        # Oxc-backed *.resource.ts parser
+  puddly-validate/     # cross-file validation
+  puddly-check/        # library entry for `check`
+  puddly-cli/          # `puddly` binary
 examples/todo-slice/  # user / project / todo resources
 tests/fixtures/       # invalid fixtures per error code
 ```

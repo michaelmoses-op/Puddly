@@ -369,74 +369,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "mochi-check"
-version = "0.1.0"
-dependencies = [
- "insta",
- "mochi-core",
- "mochi-diagnostics",
- "mochi-ir",
- "mochi-parse",
- "mochi-validate",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mochi-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "mochi-check",
- "mochi-core",
- "mochi-diagnostics",
-]
-
-[[package]]
-name = "mochi-core"
-version = "0.1.0"
-
-[[package]]
-name = "mochi-diagnostics"
-version = "0.1.0"
-dependencies = [
- "mochi-core",
- "mochi-ir",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mochi-ir"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mochi-parse"
-version = "0.1.0"
-dependencies = [
- "mochi-diagnostics",
- "mochi-ir",
- "oxc_allocator",
- "oxc_ast",
- "oxc_diagnostics",
- "oxc_parser",
- "oxc_span",
-]
-
-[[package]]
-name = "mochi-validate"
-version = "0.1.0"
-dependencies = [
- "mochi-diagnostics",
- "mochi-ir",
- "mochi-parse",
-]
-
-[[package]]
 name = "nonmax"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -733,6 +665,74 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "puddly-check"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "puddly-core",
+ "puddly-diagnostics",
+ "puddly-ir",
+ "puddly-parse",
+ "puddly-validate",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "puddly-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "puddly-check",
+ "puddly-core",
+ "puddly-diagnostics",
+]
+
+[[package]]
+name = "puddly-core"
+version = "0.1.0"
+
+[[package]]
+name = "puddly-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "puddly-core",
+ "puddly-ir",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "puddly-ir"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "puddly-parse"
+version = "0.1.0"
+dependencies = [
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_diagnostics",
+ "oxc_parser",
+ "oxc_span",
+ "puddly-diagnostics",
+ "puddly-ir",
+]
+
+[[package]]
+name = "puddly-validate"
+version = "0.1.0"
+dependencies = [
+ "puddly-diagnostics",
+ "puddly-ir",
+ "puddly-parse",
 ]
 
 [[package]]

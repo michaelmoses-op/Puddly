@@ -1,8 +1,0 @@
-[package]
-name = "mochi-core"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "Mochi framework identity and shared helpers"
-
-[dependencies]

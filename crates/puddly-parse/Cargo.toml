@@ -1,0 +1,15 @@
+[package]
+name = "puddly-parse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parse Puddly *.resource.ts files into unvalidated IR"
+
+[dependencies]
+puddly-diagnostics = { workspace = true }
+puddly-ir = { workspace = true }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_diagnostics = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }

@@ -5,8 +5,8 @@ docs/
 /target/
 **/*.rs.bk
 
-# Generated framework output (commit only migrations/ and .mochi/manifest.json later)
-.mochi/cache/
-.mochi/generated/
+# Generated framework output (commit only migrations/ and .puddly/manifest.json later)
+.puddly/cache/
+.puddly/generated/
 **/node_modules/
 .DS_Store

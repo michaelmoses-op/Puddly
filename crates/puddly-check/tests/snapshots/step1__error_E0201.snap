@@ -1,0 +1,27 @@
+---
+source: crates/puddly-check/tests/step1.rs
+expression: normalize_paths(&result.json)
+---
+{
+  "ok": false,
+  "error_count": 1,
+  "diagnostics": [
+    {
+      "code": "E0201",
+      "severity": "error",
+      "message": "resource `bad` is missing required `access` block",
+      "path": "<WORKSPACE>/tests/fixtures/invalid/E0201/bad.resource.ts",
+      "start": 35,
+      "end": 68,
+      "line": 1,
+      "column": 36,
+      "labels": [],
+      "suggestion": {
+        "message": "add an access object",
+        "patch": "access: { list: rule.authenticated(), create: rule.authenticated(), update: rule.authenticated(), delete: rule.authenticated() }"
+      },
+      "root_id": "E0201:bad",
+      "follow_on": false
+    }
+  ]
+}
