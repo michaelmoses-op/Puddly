@@ -80,6 +80,7 @@ fn every_error_code_has_fixture() {
         ErrorCode::E0208,
         ErrorCode::E0209,
         ErrorCode::E0210,
+        ErrorCode::E0211,
     ];
     for code in codes_with_fixtures {
         let dir = fixture(&format!("tests/fixtures/invalid/{code}"));

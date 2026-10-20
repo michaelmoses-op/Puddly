@@ -112,6 +112,23 @@ pub fn validate_app(root: &Path) -> (Option<AppIr>, Report, Vec<SourceFile>) {
 }
 
 fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Report) {
+    // Reserved built-in RPC resource name
+    if r.name == "auth" {
+        report.push(
+            Diagnostic::error(
+                ErrorCode::E0211,
+                r.path.clone(),
+                r.span,
+                "resource name `auth` is reserved for built-in auth RPC",
+            )
+            .with_suggestion(
+                "rename the resource (e.g. `account`)",
+                Some("resource(\"account\", { ... })".into()),
+            )
+            .with_root_id(format!("E0211:{}", r.name)),
+        );
+    }
+
     // Missing access
     if r.access.is_none() {
         report.push(

@@ -8,7 +8,7 @@ use puddly_diagnostics::explain_text;
 use puddly_manifest::{
     build_manifest, stale_message, stale_status, write_manifest, StaleStatus,
 };
-use puddly_db::PostgresExecutor;
+use puddly_db::{Executor, PostgresExecutor};
 use puddly_migrate::{
     apply_migrations, apply_migrations_dry_run, drift_message, drift_status, generate_migration,
     DriftStatus,
@@ -16,8 +16,11 @@ use puddly_migrate::{
 use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
 };
+use puddly_rpc::RpcServer;
+use puddly_server::{serve, ServerConfig};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 
 #[derive(Parser, Debug)]
 #[command(name = CLI_NAME, version)]
@@ -76,6 +79,20 @@ enum Commands {
     Auth {
         #[command(subcommand)]
         command: AuthCmd,
+    },
+    /// Run the minimal sync HTTP RPC server (ADR-024)
+    Serve {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Bind address (default 127.0.0.1:3000)
+        #[arg(long, default_value = "127.0.0.1:3000")]
+        bind: String,
+        /// Postgres URL (defaults to $DATABASE_URL)
+        #[arg(long)]
+        database_url: Option<String>,
+        /// Set Secure on session cookies
+        #[arg(long)]
+        secure_cookies: bool,
     },
 }
 
@@ -370,6 +387,53 @@ fn main() -> ExitCode {
                 }
             },
         },
+        Commands::Serve {
+            path,
+            bind,
+            database_url,
+            secure_cookies,
+        } => {
+            let url = database_url
+                .or_else(|| std::env::var("DATABASE_URL").ok())
+                .filter(|s| !s.is_empty());
+            let Some(url) = url else {
+                eprintln!("error: serve requires --database-url or $DATABASE_URL");
+                return ExitCode::from(1);
+            };
+            let result = check(&path);
+            if !result.ok {
+                print_out(&format_check(&result, false));
+                return ExitCode::from(1);
+            }
+            let ir = result.ir.expect("ok implies ir");
+            let mut rpc = match RpcServer::from_app(&path, ir) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(1);
+                }
+            };
+            rpc.secure_cookies = secure_cookies;
+            let exec: Box<dyn Executor + Send> = match PostgresExecutor::connect(&url) {
+                Ok(e) => Box::new(e),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(1);
+                }
+            };
+            let config = ServerConfig {
+                bind,
+                root: path,
+                secure_cookies,
+            };
+            match serve(&config, Arc::new(Mutex::new(rpc)), Arc::new(Mutex::new(exec))) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
     }
 }
 

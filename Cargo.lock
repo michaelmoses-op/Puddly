@@ -1174,6 +1174,8 @@ dependencies = [
  "puddly-manifest",
  "puddly-migrate",
  "puddly-query",
+ "puddly-rpc",
+ "puddly-server",
  "serde_json",
 ]
 
@@ -1300,6 +1302,20 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "puddly-server"
+version = "0.1.0"
+dependencies = [
+ "puddly-actions",
+ "puddly-auth",
+ "puddly-check",
+ "puddly-core",
+ "puddly-db",
+ "puddly-rpc",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

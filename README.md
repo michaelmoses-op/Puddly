@@ -7,16 +7,17 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 6** — action-file loading + RPC skeleton (`POST /rpc/<resource>.<operation>`),
-auth resolver in request context, access-rule enforcement on CRUD, CSRF custom-header on
-mutations, thin `auth.login` / `auth.register` / `auth.logout`, opt-in `puddly auth scaffold`.
+**Build plan Step 7** — minimal sync HTTP server (`puddly serve`) over the RPC library,
+owner/member list SQL predicates, reserved `auth` name (E0211), optional register
+`userId`, and `rule.member` placeholder docs (`puddly explain E0212`).
 
 ## Quick start
 
 ```bash
 cargo run -p puddly-cli -- check examples/todo-slice
-cargo run -p puddly-cli -- migrate check examples/todo-slice
-cargo run -p puddly-cli -- auth scaffold /tmp/puddly-app   # opt-in auth DDL migration
+cargo run -p puddly-cli -- explain E0212
+# HTTP RPC (needs Postgres):
+# DATABASE_URL=postgres://... cargo run -p puddly-cli -- serve examples/todo-slice --bind 127.0.0.1:3000
 cargo test --workspace
 ```
 
@@ -38,7 +39,8 @@ crates/
   puddly-data/         # compiled statements + closed-vocabulary builder
   puddly-auth/         # email/password, cookie sessions, access rules, auth scaffold
   puddly-actions/      # load / index declared *.action.ts files
-  puddly-rpc/          # RPC dispatch skeleton (CSRF, auth context, CRUD, auth ops)
+  puddly-rpc/          # RPC dispatch (CSRF, auth context, CRUD, auth ops)
+  puddly-server/       # sync HTTP adapter (ADR-024)
   puddly-cli/          # `puddly` binary
 examples/todo-slice/   # sample app + manifest + migrations
 tests/fixtures/        # invalid fixtures per error code

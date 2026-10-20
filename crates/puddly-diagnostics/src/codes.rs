@@ -29,6 +29,10 @@ pub enum ErrorCode {
     E0209,
     /// Access rule references an unknown field.
     E0210,
+    /// Reserved resource name (`auth` is built-in RPC).
+    E0211,
+    /// Documentation: `rule.member` equality placeholder (not a hard error by itself).
+    E0212,
     /// I/O or project layout problem (not a resource-rule error).
     E0900,
 }
@@ -48,6 +52,8 @@ impl ErrorCode {
             Self::E0208 => "E0208",
             Self::E0209 => "E0209",
             Self::E0210 => "E0210",
+            Self::E0211 => "E0211",
+            Self::E0212 => "E0212",
             Self::E0900 => "E0900",
         }
     }
@@ -166,6 +172,20 @@ pub static ERROR_REGISTRY: &[ErrorDoc] = &[
         explanation: "`rule.owner` / `rule.member` must name a field on the same resource.",
         example_bad: "update: rule.owner(\"owne\")",
         example_good: "update: rule.owner(\"owner\")",
+    },
+    ErrorDoc {
+        code: ErrorCode::E0211,
+        title: "reserved resource name",
+        explanation: "The resource name `auth` is reserved for built-in RPC (`auth.login`, `auth.register`, `auth.logout`). Rename your resource.",
+        example_bad: "export const Auth = resource(\"auth\", { ... })",
+        example_good: "export const Account = resource(\"account\", { ... })",
+    },
+    ErrorDoc {
+        code: ErrorCode::E0212,
+        title: "rule.member is an equality placeholder",
+        explanation: "`rule.member(field)` currently means the same as `rule.owner(field)`: the signed-in user's id must equal the row's field value. Multi-value membership via join tables is planned later. Prefer `rule.owner` when you mean single-owner equality; use `member` only when you intend to migrate to join-table membership.",
+        example_bad: "// expecting array/org membership today\nlist: rule.member(\"members\")",
+        example_good: "// single id field (current semantics)\nlist: rule.member(\"orgId\")\n// or explicit owner\nlist: rule.owner(\"owner\")",
     },
     ErrorDoc {
         code: ErrorCode::E0900,

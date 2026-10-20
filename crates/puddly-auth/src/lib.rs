@@ -25,7 +25,7 @@ pub use session::{
     generate_session_token, hash_token, DbSessionStore, MemorySessionStore, Session, SessionStore,
     SESSION_TTL_SECS,
 };
-pub use user::AuthUser;
+pub use user::{generate_user_id, AuthUser};
 
 /// SQL to create framework auth tables (apply as a committed migration in apps).
 pub const AUTH_SCHEMA_SQL: &str = r#"
