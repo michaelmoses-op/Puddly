@@ -3,8 +3,9 @@
 use crate::access_gate::{enforce, list_owner_field, require_rule, row_values_from_db};
 use crate::context::RpcContext;
 use crate::error::{RpcError, RpcResult};
+use crate::list_body::apply_list_body;
 use puddly_data::{
-    exec_prepared, query_prepared, PreparedKind, StatementBook,
+    exec_prepared, query_prepared, PreparedKind, QueryBuilder, StatementBook,
 };
 use puddly_db::{with_transaction, DbRow, Executor, SqlValue};
 use puddly_ir::ResourceIr;
@@ -33,28 +34,33 @@ pub fn handle_crud(
 
 fn list(
     resource: &ResourceIr,
-    _body: &Value,
+    body: &Value,
     ctx: &RpcContext,
     _book: &StatementBook,
     exec: &mut dyn Executor,
 ) -> RpcResult<Value> {
     let rule = require_rule(resource, "list")?;
-    // Owner/member list: require sign-in; inject equality predicate into SQL (Step 7).
-    // Authenticated/role: enforce without a row.
+    let mut qb = QueryBuilder::for_resource(resource);
+
+    // Owner/member: require sign-in and inject equality that ANDs with body filters.
     if let Some(field) = list_owner_field(rule) {
         let user = ctx.user.as_ref().ok_or(RpcError::Unauthorized)?;
-        let sql = format!(
-            "SELECT * FROM \"{}\" WHERE \"{}\" = $1",
-            resource.name, field
-        );
-        let rows = exec.query(&sql, &[SqlValue::Uuid(user.id.clone())])?;
-        return Ok(json!({ "items": rows_to_json(&rows) }));
+        qb = qb
+            .require_eq(field, SqlValue::Uuid(user.id.clone()))
+            .map_err(|e| RpcError::BadRequest(e.to_string()))?;
+    } else {
+        enforce(rule, ctx.user.as_ref(), None)?;
     }
 
-    enforce(rule, ctx.user.as_ref(), None)?;
-    let sql = format!("SELECT * FROM \"{}\"", resource.name);
-    let rows = exec.query(&sql, &[])?;
-    Ok(json!({ "items": rows_to_json(&rows) }))
+    qb = apply_list_body(qb, body)?;
+    let page = qb
+        .build()
+        .map_err(|e| RpcError::BadRequest(e.to_string()))?;
+    let rows = exec.query(&page.sql, &page.params)?;
+    Ok(json!({
+        "items": rows_to_json(&rows),
+        "limit": page.limit,
+    }))
 }
 
 fn get(

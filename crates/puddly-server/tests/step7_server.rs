@@ -95,7 +95,7 @@ fn http_list_injects_owner_where() {
         exec.log.iter().any(|q| {
             q.sql.contains("WHERE")
                 && q.sql.contains("\"owner\"")
-                && q.params == vec![SqlValue::Uuid("owner-1".into())]
+                && q.params.first() == Some(&SqlValue::Uuid("owner-1".into()))
         }),
         "expected owner WHERE predicate, got {:?}",
         exec.log
