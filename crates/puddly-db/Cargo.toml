@@ -1,0 +1,18 @@
+[package]
+name = "puddly-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Database executor interface (Postgres first) for Puddly"
+
+[features]
+default = ["postgres"]
+postgres = ["dep:postgres"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+postgres = { workspace = true, optional = true }
+
+[dev-dependencies]
