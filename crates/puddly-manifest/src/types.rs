@@ -105,4 +105,6 @@ pub struct ManifestAction {
     pub name: String,
     pub run: String,
     pub input: Vec<ManifestField>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<ManifestRule>,
 }

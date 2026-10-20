@@ -135,6 +135,20 @@ impl QueryBuilder {
         Ok(self)
     }
 
+    /// Access-predicate equality that does **not** require `filterable: true`
+    /// (owner/member fields are often refs). Still must name a known column.
+    pub fn require_eq(mut self, field: &str, value: SqlValue) -> DataResult<Self> {
+        if !self.known_fields.contains(field) {
+            return Err(DataError::UnknownField(field.into()));
+        }
+        self.filters.push(Filter {
+            field: field.into(),
+            op: FilterOp::Eq,
+            value,
+        });
+        Ok(self)
+    }
+
     pub fn before(mut self, field: &str, value: SqlValue) -> DataResult<Self> {
         self.push_filter(field, FilterOp::Before, value)?;
         Ok(self)

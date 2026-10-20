@@ -176,6 +176,7 @@ fn action_to_manifest(a: &ActionIr) -> ManifestAction {
         name: a.name.clone(),
         run: a.run.clone(),
         input: a.input.iter().map(field_to_manifest).collect(),
+        access: a.access.as_ref().map(rule_to_manifest),
     }
 }
 

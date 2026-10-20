@@ -264,7 +264,7 @@ fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Repor
         }
     }
 
-    // Action files
+    // Action files + optional per-action access field refs
     for action in &r.actions {
         let action_path = resolve_action_path(&r.path, &action.run);
         if !action_path.is_file() {
@@ -282,6 +282,36 @@ fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Repor
                 )
                 .with_root_id(format!("E0207:{}:{}", r.name, action.name)),
             );
+        }
+        if let Some(rule) = &action.access {
+            match rule {
+                RuleIr::Owner { field, span } | RuleIr::Member { field, span }
+                    if !field_names.contains(field.as_str()) =>
+                {
+                    let suggestion = closest(field, field_names.iter().copied());
+                    let mut d = Diagnostic::error(
+                        ErrorCode::E0210,
+                        r.path.clone(),
+                        *span,
+                        format!(
+                            "action `{}` access rule references unknown field `{field}`",
+                            action.name
+                        ),
+                    )
+                    .with_root_id(format!(
+                        "E0210:{}:action:{}:{}",
+                        r.name, action.name, field
+                    ));
+                    if let Some(s) = suggestion {
+                        d = d.with_suggestion(
+                            format!("did you mean `{s}`?"),
+                            Some(format!("access: rule.owner(\"{s}\")")),
+                        );
+                    }
+                    report.push(d);
+                }
+                _ => {}
+            }
         }
     }
 
