@@ -9,10 +9,19 @@ use oxc_ast::ast::{
 use serde_json::Value;
 use std::path::Path;
 
-/// Extract optional `export const load = { … }` from a Program.
+/// Result of parsing view-level exports (`load` + optional `live`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ViewFlags {
+    pub load: LoadSpec,
+    pub live: bool,
+}
+
+/// Extract optional `export const load` / `export const live` from a Program.
 /// Missing load → empty [`LoadSpec`]. Islands typically have none.
-pub fn lower_load_export(program: &Program<'_>, path: &Path) -> ViewResult<LoadSpec> {
-    let mut found: Option<LoadSpec> = None;
+pub fn lower_view_exports(program: &Program<'_>, path: &Path) -> ViewResult<ViewFlags> {
+    let mut load: Option<(LoadSpec, bool)> = None;
+    let mut live_export: Option<bool> = None;
+
     for stmt in &program.body {
         let Statement::ExportDeclaration(export) = stmt else {
             continue;
@@ -27,34 +36,74 @@ pub fn lower_load_export(program: &Program<'_>, path: &Path) -> ViewResult<LoadS
             let Some(name) = binding_name(&decl.id) else {
                 continue;
             };
-            if name != "load" {
-                continue;
+            match name.as_str() {
+                "load" => {
+                    if load.is_some() {
+                        return Err(dialect(path, "duplicate `export const load`"));
+                    }
+                    let Some(init) = &decl.init else {
+                        return Err(dialect(path, "`load` must be initialized with an object"));
+                    };
+                    load = Some(lower_load_object(init, path)?);
+                }
+                "live" => {
+                    if live_export.is_some() {
+                        return Err(dialect(path, "duplicate `export const live`"));
+                    }
+                    let Some(init) = &decl.init else {
+                        return Err(dialect(path, "`live` must be initialized with a boolean"));
+                    };
+                    live_export = Some(bool_lit(init).ok_or_else(|| {
+                        dialect(path, "`live` must be a boolean literal (`true` / `false`)")
+                    })?);
+                }
+                _ => {}
             }
-            if found.is_some() {
-                return Err(dialect(path, "duplicate `export const load`"));
-            }
-            let Some(init) = &decl.init else {
-                return Err(dialect(path, "`load` must be initialized with an object"));
-            };
-            found = Some(lower_load_object(init, path)?);
         }
     }
-    Ok(found.unwrap_or_default())
+
+    let (load_spec, live_from_load) = load.unwrap_or_default();
+    Ok(ViewFlags {
+        load: load_spec,
+        live: live_export.unwrap_or(false) || live_from_load,
+    })
 }
 
-fn lower_load_object(expr: &Expression<'_>, path: &Path) -> ViewResult<LoadSpec> {
+/// Extract optional `export const load = { … }` from a Program.
+/// Missing load → empty [`LoadSpec`]. Islands typically have none.
+#[allow(dead_code)] // public helper; Step 14 tests historically used ViewBundle.load
+pub fn lower_load_export(program: &Program<'_>, path: &Path) -> ViewResult<LoadSpec> {
+    Ok(lower_view_exports(program, path)?.load)
+}
+
+fn lower_load_object(expr: &Expression<'_>, path: &Path) -> ViewResult<(LoadSpec, bool)> {
     let obj = as_object(expr).ok_or_else(|| dialect(path, "`load` must be an object literal"))?;
     let mut entries = Vec::new();
+    let mut live = false;
     for prop in &obj.properties {
         let ObjectPropertyKind::ObjectProperty(p) = prop else {
             return Err(dialect(path, "spread in `load` is not supported"));
         };
         let key = static_key(&p.key)
             .ok_or_else(|| dialect(path, "`load` keys must be static identifiers"))?;
+        if key == "live" {
+            live = bool_lit(&p.value).ok_or_else(|| {
+                dialect(path, "`load.live` must be a boolean literal (`true` / `false`)")
+            })?;
+            continue;
+        }
         let source = lower_load_entry(&p.value, path, &key)?;
         entries.push(LoadEntry { key, source });
     }
-    Ok(LoadSpec { entries })
+    Ok((LoadSpec { entries }, live))
+}
+
+fn bool_lit(expr: &Expression<'_>) -> Option<bool> {
+    match expr {
+        Expression::BooleanLiteral(b) => Some(b.value),
+        Expression::ParenthesizedExpression(p) => bool_lit(&p.expression),
+        _ => None,
+    }
 }
 
 fn lower_load_entry(expr: &Expression<'_>, path: &Path, key: &str) -> ViewResult<LoadSource> {

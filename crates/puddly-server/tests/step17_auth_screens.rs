@@ -100,7 +100,7 @@ async fn anonymous_401_html_links_to_login() {
         headers: BTreeMap::new(),
         body: Vec::new(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
+    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views), None)
         .await
         .unwrap();
     assert_eq!(resp.status, 401);
@@ -139,7 +139,7 @@ async fn after_login_cookie_root_succeeds_with_recording_executor() {
         headers,
         body: Vec::new(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
+    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views), None)
         .await
         .unwrap();
     assert_eq!(resp.status, 200, "{}", String::from_utf8_lossy(&resp.body));

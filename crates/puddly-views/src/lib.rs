@@ -7,6 +7,8 @@
 //! Views may declare `export const load = { … }` ([`LoadSpec`]); the server runs
 //! resource CRUD and passes results as SSR props (ADR-032). Collections render via
 //! `{props.x.items.map((item) => <…/>)}` ([`NodeIr::Map`], ADR-033).
+//! Optional `export const live = true` (or `live: true` in `load`) enables SSE
+//! (`data-puddly-live="1"`, ADR-040).
 //!
 //! See module docs on [`ir`] for the accepted dialect.
 
@@ -25,9 +27,10 @@ pub use error::{ViewError, ViewResult};
 pub use ir::{
     Attr, AttrValue, CompiledModule, LoadEntry, LoadSource, LoadSpec, ModuleKind, NodeIr, PropPath,
 };
+pub use load::ViewFlags;
 pub use ssr::{
-    demo_todo_props, render_page, render_view_chunks, render_view_html, wrap_document,
-    RenderChunks, ISLANDS_RUNTIME_JS,
+    demo_todo_props, inject_live_attr, render_page, render_view_chunks, render_view_html,
+    wrap_document, RenderChunks, ISLANDS_RUNTIME_JS,
 };
 
 use parse::parse_module_path;

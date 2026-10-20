@@ -62,7 +62,7 @@ async fn authenticated_view_load_renders_canned_title() {
         headers,
         body: Vec::new(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
+    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views), None)
         .await
         .unwrap();
     assert_eq!(resp.status, 200, "{}", String::from_utf8_lossy(&resp.body));
@@ -95,7 +95,7 @@ async fn anonymous_view_load_returns_401_html() {
         headers: BTreeMap::new(),
         body: Vec::new(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
+    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views), None)
         .await
         .unwrap();
     assert_eq!(resp.status, 401);

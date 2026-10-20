@@ -27,8 +27,9 @@
 //! - String attributes and `{expr}` attribute values
 //! - One-level `{expr.map((ident) => <jsx/>)}` → [`NodeIr::Map`] (ADR-033)
 //! - Optional `data-puddly-id` (preserved; also auto-assigned for text exprs)
+//! - Optional `export const live = true` (or `live: true` in `load`) for SSE (ADR-040)
 //!
-//! Not yet: full JS, hooks, VDOM, spreads, computed keys, nested maps, `live: true`.
+//! Not yet: full JS, hooks, VDOM, spreads, computed keys, nested maps.
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -155,6 +156,8 @@ pub struct CompiledModule {
     pub root: NodeIr,
     /// Parsed `export const load` (empty for islands / views without load).
     pub load: LoadSpec,
+    /// When true, SSR sets `data-puddly-live="1"` so the client opens EventSource.
+    pub live: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
