@@ -72,7 +72,7 @@ async fn dispatch_get_v_todo_with_session_and_canned_rows() {
         headers,
         body: Vec::new(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
+    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views), None)
         .await
         .unwrap();
     assert_eq!(resp.status, 200);
@@ -93,7 +93,7 @@ async fn anonymous_root_is_401_not_fixture() {
         headers: BTreeMap::new(),
         body: Vec::new(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
+    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views), None)
         .await
         .unwrap();
     assert_eq!(resp.status, 401);

@@ -229,3 +229,17 @@ pub async fn write_http_response<W: AsyncWrite + Unpin>(
     writer.flush().await?;
     Ok(())
 }
+
+/// Write SSE response headers (no `Content-Length`; connection stays open).
+pub async fn write_sse_headers<W: AsyncWrite + Unpin>(writer: &mut W) -> ServerResult<()> {
+    let head = "\
+HTTP/1.1 200 OK\r\n\
+content-type: text/event-stream; charset=utf-8\r\n\
+cache-control: no-cache\r\n\
+connection: keep-alive\r\n\
+x-accel-buffering: no\r\n\
+\r\n";
+    writer.write_all(head.as_bytes()).await?;
+    writer.flush().await?;
+    Ok(())
+}

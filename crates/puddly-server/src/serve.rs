@@ -3,8 +3,9 @@
 use crate::dev::{inject_dev_overlay_script, DevHandles, DevState, DEV_OVERLAY_JS};
 use crate::error::{ServerError, ServerResult};
 use crate::http::{
-    parse_http_request, write_http_response, HttpRequest, HttpResponse,
+    parse_http_request, write_http_response, write_sse_headers, HttpRequest, HttpResponse,
 };
+use crate::sse::{event_from_rpc, SseHub, SSE_KEEPALIVE};
 use crate::view_load::{
     resolve_load, resolve_static_load, unauthorized_html, unavailable_html, LoadOutcome,
 };
@@ -17,6 +18,8 @@ use puddly_views::{render_page, ViewBundle, ISLANDS_RUNTIME_JS};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
@@ -38,13 +41,28 @@ impl Default for ServerConfig {
 }
 
 /// Async accept loop. Check out a pool connection per RPC / view-load request.
-/// Health / island-runtime GETs skip the pool. `RpcServer` remains behind a mutex
-/// for in-memory session state.
+/// Health / island-runtime / SSE GETs skip the pool. `RpcServer` remains behind a
+/// mutex for in-memory session state. Creates a shared [`SseHub`] for `GET /events`.
 pub async fn serve<S, R>(
     config: &ServerConfig,
     rpc: Arc<Mutex<RpcServer<S, R>>>,
     pool: PgPool,
     views: Arc<ViewBundle>,
+) -> ServerResult<()>
+where
+    S: SessionStore + Send + 'static,
+    R: ActionRunner + Send + 'static,
+{
+    serve_with_hub(config, rpc, pool, views, SseHub::shared()).await
+}
+
+/// Like [`serve`], but with an explicit shared SSE hub (tests / embedders).
+pub async fn serve_with_hub<S, R>(
+    config: &ServerConfig,
+    rpc: Arc<Mutex<RpcServer<S, R>>>,
+    pool: PgPool,
+    views: Arc<ViewBundle>,
+    hub: Arc<SseHub>,
 ) -> ServerResult<()>
 where
     S: SessionStore + Send + 'static,
@@ -60,8 +78,9 @@ where
         let rpc = Arc::clone(&rpc);
         let pool = pool.clone();
         let views = Arc::clone(&views);
+        let hub = Arc::clone(&hub);
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(stream, &rpc, &pool, &views).await {
+            if let Err(e) = handle_stream(stream, &rpc, &pool, &views, &hub).await {
                 eprintln!("request error: {e}");
             }
         });
@@ -111,8 +130,27 @@ where
     S: SessionStore,
     R: ActionRunner,
 {
+    serve_once_with_hub(stream, rpc, exec, views, None).await
+}
+
+/// Like [`serve_once`] with an optional SSE hub (mutations publish; `/events` streams).
+pub async fn serve_once_with_hub<S, R>(
+    stream: &mut TcpStream,
+    rpc: &Mutex<RpcServer<S, R>>,
+    exec: &mut dyn Executor,
+    views: Option<&ViewBundle>,
+    hub: Option<&SseHub>,
+) -> ServerResult<()>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
     let http_req = parse_http_request(stream).await?;
-    let http_resp = dispatch_http(&http_req, rpc, exec, views).await?;
+    if is_events_path(&http_req) {
+        let hub = hub.ok_or_else(|| ServerError::msg("SSE hub required for /events"))?;
+        return stream_sse(stream, hub).await;
+    }
+    let http_resp = dispatch_http(&http_req, rpc, exec, views, hub).await?;
     write_http_response(stream, &http_resp).await
 }
 
@@ -121,12 +159,17 @@ async fn handle_stream<S, R>(
     rpc: &Mutex<RpcServer<S, R>>,
     pool: &PgPool,
     views: &ViewBundle,
+    hub: &SseHub,
 ) -> ServerResult<()>
 where
     S: SessionStore,
     R: ActionRunner,
 {
     let http_req = parse_http_request(&mut stream).await?;
+
+    if is_events_path(&http_req) {
+        return stream_sse(&mut stream, hub).await;
+    }
 
     if let Some(http_resp) = try_dispatch_static_get(&http_req)? {
         return write_http_response(&mut stream, &http_resp).await;
@@ -162,7 +205,7 @@ where
         .get()
         .await
         .map_err(|e| ServerError::msg(e.to_string()))?;
-    let http_resp = dispatch_http(&http_req, rpc, &mut exec, None).await?;
+    let http_resp = dispatch_http(&http_req, rpc, &mut exec, None, Some(hub)).await?;
     write_http_response(&mut stream, &http_resp).await
 }
 
@@ -176,6 +219,10 @@ where
     R: ActionRunner,
 {
     let http_req = parse_http_request(&mut stream).await?;
+
+    if is_events_path(&http_req) {
+        return stream_sse(&mut stream, &handles.hub).await;
+    }
 
     if let Some(http_resp) = try_dispatch_dev_meta(&http_req, handles).await? {
         return write_http_response(&mut stream, &http_resp).await;
@@ -263,12 +310,14 @@ where
         .get()
         .await
         .map_err(|e| ServerError::msg(e.to_string()))?;
-    let http_resp = dispatch_http(&http_req, rpc, &mut exec, None).await?;
+    let http_resp =
+        dispatch_http(&http_req, rpc, &mut exec, None, Some(handles.hub.as_ref())).await?;
     write_http_response(&mut stream, &http_resp).await
 }
 
 /// Handle GET routes that do not need an [`Executor`] or view load (health / islands JS).
 /// View SSR is async — use [`dispatch_http`] / [`dispatch_http_dev`] instead.
+/// SSE (`GET /events`) is long-lived and handled by [`stream_sse`], not here.
 pub fn try_dispatch_get(
     http_req: &HttpRequest,
     views: Option<&ViewBundle>,
@@ -290,6 +339,58 @@ fn try_dispatch_static_get(http_req: &HttpRequest) -> ServerResult<Option<HttpRe
         return Ok(Some(HttpResponse::js(200, "OK", ISLANDS_RUNTIME_JS)));
     }
     Ok(None)
+}
+
+fn is_events_path(http_req: &HttpRequest) -> bool {
+    if !http_req.method.eq_ignore_ascii_case("GET") {
+        return false;
+    }
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+    path == "/events" || path == "/sse"
+}
+
+/// Long-lived SSE write loop: headers, initial keep-alive comment, then hub events.
+pub async fn stream_sse<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    hub: &SseHub,
+) -> ServerResult<()> {
+    write_sse_headers(writer).await?;
+    writer.write_all(SSE_KEEPALIVE.as_bytes()).await?;
+    writer.flush().await?;
+
+    let mut rx = hub.subscribe();
+    let mut keepalive = tokio::time::interval(Duration::from_secs(15));
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Skip the immediate first tick (we already sent a comment).
+    keepalive.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = keepalive.tick() => {
+                if writer.write_all(SSE_KEEPALIVE.as_bytes()).await.is_err() {
+                    break;
+                }
+                if writer.flush().await.is_err() {
+                    break;
+                }
+            }
+            msg = rx.recv() => {
+                match msg {
+                    Ok(frame) => {
+                        if writer.write_all(frame.as_bytes()).await.is_err() {
+                            break;
+                        }
+                        if writer.flush().await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn try_dispatch_dev_meta<S, R>(
@@ -389,11 +490,13 @@ pub fn dev_status_response(state: &DevState) -> HttpResponse {
 /// Async dispatch used by the accept loop and unit tests.
 /// Caller supplies an already-checked-out (or in-memory) [`Executor`].
 /// `views` enables SSR routes (`GET /`, `GET /v/<name>`, plus `/login`/`/register` aliases).
+/// When `hub` is set, successful mutating RPCs publish SSE events.
 pub async fn dispatch_http<S, R>(
     http_req: &HttpRequest,
     rpc: &Mutex<RpcServer<S, R>>,
     exec: &mut dyn Executor,
     views: Option<&ViewBundle>,
+    hub: Option<&SseHub>,
 ) -> ServerResult<HttpResponse>
 where
     S: SessionStore,
@@ -432,7 +535,7 @@ where
             .map_err(|e| ServerError::BadRequest(format!("invalid JSON: {e}")))?
     };
 
-    let mut rpc_req = RpcRequest::new(target, body);
+    let mut rpc_req = RpcRequest::new(target.clone(), body);
     for (k, v) in &http_req.headers {
         rpc_req.headers.insert(k.clone(), v.clone());
     }
@@ -445,6 +548,14 @@ where
         let mut rpc = rpc.lock().await;
         rpc.handle(&rpc_req, exec).await
     };
+
+    if rpc_resp.ok {
+        if let (Some(hub), Some(data)) = (hub, rpc_resp.data.as_ref()) {
+            if let Some(event) = event_from_rpc(&target, data) {
+                hub.publish(&event);
+            }
+        }
+    }
 
     Ok(rpc_to_http(rpc_resp))
 }
@@ -515,7 +626,7 @@ where
             .map_err(|e| ServerError::BadRequest(format!("invalid JSON: {e}")))?
     };
 
-    let mut rpc_req = RpcRequest::new(target, body);
+    let mut rpc_req = RpcRequest::new(target.clone(), body);
     for (k, v) in &http_req.headers {
         rpc_req.headers.insert(k.clone(), v.clone());
     }
@@ -527,6 +638,15 @@ where
         let mut rpc = rpc.lock().await;
         rpc.handle(&rpc_req, exec).await
     };
+
+    if rpc_resp.ok {
+        if let Some(data) = rpc_resp.data.as_ref() {
+            if let Some(event) = event_from_rpc(&target, data) {
+                handles.hub.publish(&event);
+            }
+        }
+    }
+
     Ok(rpc_to_http(rpc_resp))
 }
 

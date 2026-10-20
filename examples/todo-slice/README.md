@@ -42,9 +42,12 @@ Open the app:
 2. You land on `/` (Todos). Nav: **Todos / Login / Register / Logout**.
 3. Type a title → **Add**. First create ensures a personal `project` row for you (no hidden UUID).
 4. **Toggle done** / **Archive** on a row. Archive deletes the row so it leaves the list.
-5. Reload — remaining todos still load from Postgres. Empty list shows *No todos yet — add one above.*
+   Toggle uses `data-puddly-reload="0"` so the same tab patches via RPC; other tabs get
+   SSE (`GET /events`, `live: true` on the view).
+5. Open a second tab of `/` — toggle in one; the other updates without a manual refresh.
+6. Reload — remaining todos still load from Postgres. Empty list shows *No todos yet — add one above.*
 
-CSRF (`X-Puddly-CSRF`) and session cookies are sent automatically by `tools/puddly-islands.js` (`credentials: "include"`). You do not set them by hand in the browser UI.
+CSRF (`X-Puddly-CSRF`) and session cookies are sent automatically by `tools/puddly-islands.js` (`credentials: "include"`). You do not set them by hand in the browser UI. Live pages auto-open `EventSource('/events')`.
 
 ## Layout
 

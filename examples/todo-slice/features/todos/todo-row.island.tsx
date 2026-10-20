@@ -9,6 +9,7 @@ export default function TodoRow(props) {
         data-puddly-rpc="todo.update"
         data-puddly-body={props.id}
         data-puddly-toggle-done="1"
+        data-puddly-reload="0"
       >
         Toggle done
       </button>

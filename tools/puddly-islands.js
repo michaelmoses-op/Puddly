@@ -1,17 +1,22 @@
 /**
- * Puddly island runtime (Step 11) + declarative RPC mutations (Step 16).
+ * Puddly island runtime (Step 11) + declarative RPC mutations (Step 16) +
+ * SSE live updates (Step 22).
  *
  * - Finds `[data-puddly-island]` placeholders emitted by SSR
  * - Hydrates by reading `data-puddly-props` (JSON)
  * - Fine-grained updates: patch text/attrs by `data-puddly-id` (no VDOM)
  * - `puddlyIslands.rpc(operation, body)` → POST /rpc/<op> with CSRF + cookies
  * - Binds `data-puddly-rpc` click/submit handlers (forms serialize named inputs)
+ * - `puddlyIslands.subscribeLive()` → EventSource('/events'); auto when
+ *   `data-puddly-live="1"` on <html> or <body>
  */
 (function (global) {
   "use strict";
 
   /** Must match `puddly_core::CSRF_HEADER_NAME` (HTTP header names are case-insensitive). */
   var CSRF_HEADER = "X-Puddly-CSRF";
+
+  var liveSource = null;
 
   function parseProps(el) {
     var raw = el.getAttribute("data-puddly-props") || "{}";
@@ -61,6 +66,98 @@
     opt = opt || {};
     opt.root = islandEl;
     return update(puddlyId, value, opt);
+  }
+
+  /**
+   * Replace island props JSON and patch known fields (title / done) via data-puddly-id.
+   */
+  function applyIslandProps(islandEl, nextProps) {
+    if (!islandEl || !nextProps || typeof nextProps !== "object") return false;
+    var merged = Object.assign(
+      {},
+      islandEl.__puddly && islandEl.__puddly.props ? islandEl.__puddly.props : {},
+      nextProps
+    );
+    islandEl.__puddly = islandEl.__puddly || {};
+    islandEl.__puddly.props = merged;
+    try {
+      islandEl.setAttribute("data-puddly-props", JSON.stringify(merged));
+    } catch (_) {}
+    if (merged.title != null) updateInIsland(islandEl, "title", merged.title);
+    if (merged.done != null) updateInIsland(islandEl, "done", merged.done);
+    if (merged.projectTitle != null) {
+      updateInIsland(islandEl, "project", merged.projectTitle);
+    }
+    return true;
+  }
+
+  function findIslandByKey(id) {
+    if (id == null || typeof document === "undefined") return null;
+    var key = String(id);
+    return (
+      document.querySelector('[data-puddly-key="' + key + '"]') ||
+      document.querySelector('[data-puddly-island][data-puddly-key="' + key + '"]')
+    );
+  }
+
+  /**
+   * Apply one SSE JSON event. Prefer patching an island by id/key; otherwise reload.
+   */
+  function applyLiveEvent(event) {
+    if (!event || typeof event !== "object") return;
+    var op = event.op || "";
+    var data = event.data || {};
+    var id = data.id != null ? data.id : data.archived;
+    if (op === "update" && id != null) {
+      var island = findIslandByKey(id);
+      if (island) {
+        applyIslandProps(island, data);
+        return;
+      }
+    }
+    // create / delete / archive / unknown → full reload so the list stays consistent
+    if (typeof location !== "undefined" && location.reload) {
+      location.reload();
+    }
+  }
+
+  /**
+   * Open EventSource('/events') and apply live patches. Idempotent.
+   */
+  function subscribeLive(opt) {
+    opt = opt || {};
+    if (typeof EventSource === "undefined") return null;
+    if (liveSource) return liveSource;
+    var url = opt.url || "/events";
+    var es = new EventSource(url);
+    liveSource = es;
+    es.onmessage = function (ev) {
+      var payload = null;
+      try {
+        payload = JSON.parse(ev.data);
+      } catch (_) {
+        return;
+      }
+      applyLiveEvent(payload);
+    };
+    es.onerror = function () {
+      // Browser auto-reconnects; leave liveSource set.
+    };
+    return es;
+  }
+
+  function shouldAutoSubscribeLive() {
+    if (typeof document === "undefined") return false;
+    var root =
+      document.documentElement ||
+      document.body ||
+      (document.querySelector && document.querySelector("html"));
+    if (!root || !root.getAttribute) return false;
+    if (root.getAttribute("data-puddly-live") === "1") return true;
+    if (document.body && document.body.getAttribute("data-puddly-live") === "1") {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -224,7 +321,15 @@
         location.assign(dest);
         return result;
       }
-      if (shouldReload(el) && typeof location !== "undefined") {
+      // When live + reload disabled, patch local island from RPC data (SSE covers peers).
+      if (!shouldReload(el)) {
+        var island = closestIsland(el);
+        if (island && result.data) {
+          applyIslandProps(island, result.data);
+        }
+        return result;
+      }
+      if (typeof location !== "undefined") {
         location.reload();
       }
     } else {
@@ -304,6 +409,9 @@
     hydrateIsland: hydrateIsland,
     update: update,
     updateInIsland: updateInIsland,
+    applyIslandProps: applyIslandProps,
+    applyLiveEvent: applyLiveEvent,
+    subscribeLive: subscribeLive,
     rpc: rpc,
     bindRpcActions: bindRpcActions,
     CSRF_HEADER: CSRF_HEADER,
@@ -312,12 +420,16 @@
   global.puddlyIslands = api;
 
   if (typeof document !== "undefined") {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", function () {
-        hydrateAll(document);
-      });
-    } else {
+    function boot() {
       hydrateAll(document);
+      if (shouldAutoSubscribeLive()) {
+        subscribeLive();
+      }
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", boot);
+    } else {
+      boot();
     }
   }
 })(typeof window !== "undefined" ? window : globalThis);

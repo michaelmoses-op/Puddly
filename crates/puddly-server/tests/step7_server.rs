@@ -49,7 +49,7 @@ async fn health_endpoint() {
         headers: BTreeMap::new(),
         body: Vec::new(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut exec, None).await.unwrap();
+    let resp = dispatch_http(&req, &rpc, &mut exec, None, None).await.unwrap();
     assert_eq!(resp.status, 200);
 }
 
@@ -74,7 +74,7 @@ async fn http_list_injects_owner_where() {
         headers,
         body: b"{}".to_vec(),
     };
-    let resp = dispatch_http(&req, &rpc, &mut recording, None).await.unwrap();
+    let resp = dispatch_http(&req, &rpc, &mut recording, None, None).await.unwrap();
     assert_eq!(resp.status, 200, "{:?}", String::from_utf8_lossy(&resp.body));
 
     // Re-run via RpcServer to assert SQL (RecordingExecutor consumed inside mutex).

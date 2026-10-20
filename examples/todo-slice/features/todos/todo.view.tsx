@@ -1,3 +1,5 @@
+export const live = true;
+
 export const load = {
   todos: { list: "todo", include: ["project"] },
   heading: { value: "Todos" },

@@ -10,6 +10,7 @@ use puddly_rpc::RpcServer;
 use puddly_views::ViewBundle;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
 
@@ -137,6 +138,8 @@ pub struct DevHandles<S: SessionStore = MemorySessionStore, R: ActionRunner = St
     pub views: RwLock<ViewBundle>,
     pub state: RwLock<DevState>,
     pub rpc: Option<Mutex<RpcServer<S, R>>>,
+    /// In-process SSE hub (`GET /events`).
+    pub hub: Arc<crate::sse::SseHub>,
 }
 
 impl<S: SessionStore, R: ActionRunner> DevHandles<S, R> {
@@ -145,7 +148,13 @@ impl<S: SessionStore, R: ActionRunner> DevHandles<S, R> {
             views: RwLock::new(views),
             state: RwLock::new(state),
             rpc: rpc.map(Mutex::new),
+            hub: crate::sse::SseHub::shared(),
         }
+    }
+
+    pub fn with_hub(mut self, hub: Arc<crate::sse::SseHub>) -> Self {
+        self.hub = hub;
+        self
     }
 }
 

@@ -5,11 +5,13 @@
 //! pool connection (no global `Mutex` on the executor).
 //!
 //! Step 12 adds [`serve_dev`] / [`DevState`] for `puddly dev` (ADR-030).
+//! Step 22 adds SSE / `live: true` via [`SseHub`] + `GET /events` (ADR-040).
 
 mod dev;
 mod error;
 mod http;
 mod serve;
+mod sse;
 mod view_load;
 mod watch;
 
@@ -20,10 +22,13 @@ pub use dev::{
 };
 pub use error::{ServerError, ServerResult};
 pub use http::{
-    parse_http_request, parse_http_request_bytes, write_http_response, HttpRequest, HttpResponse,
+    parse_http_request, parse_http_request_bytes, write_http_response, write_sse_headers,
+    HttpRequest, HttpResponse,
 };
 pub use serve::{
     dev_status_response, dispatch_http, dispatch_http_dev, serve, serve_dev, serve_once,
-    try_dispatch_get, try_dispatch_get_dev, ServerConfig,
+    serve_once_with_hub, serve_with_hub, stream_sse, try_dispatch_get, try_dispatch_get_dev,
+    ServerConfig,
 };
+pub use sse::{event_from_rpc, SseEvent, SseHub, SSE_KEEPALIVE};
 pub use watch::watch_dev_loop;

@@ -7,9 +7,9 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 21** — `puddly init` + [`CONVENTIONS.md`](CONVENTIONS.md) (ADR-039).
-Should-haves 19–21 done. Prior: Step 20 typed client (ADR-038). Post-MVP (SSE, REST,
-row codegen, prod hardening) not started.
+**Build plan Step 22** — SSE / `live: true` realtime (ADR-040). `GET /events` +
+in-process hub; islands `subscribeLive` / EventSource. Prior: Step 21 `puddly init` +
+[`CONVENTIONS.md`](CONVENTIONS.md) (ADR-039). Next post-MVP: prod hardening, row codegen.
 
 ## Try the todo slice
 

@@ -290,24 +290,67 @@ pub fn wrap_document(body_inner: &str) -> String {
     )
 }
 
+/// Ensure `data-puddly-live="1"` on `<html>` (or `<body>` if no html root).
+pub fn inject_live_attr(html: &str) -> String {
+    if html.contains("data-puddly-live=") {
+        return html.to_string();
+    }
+    if let Some(rest) = html.strip_prefix("<html") {
+        // `<html>` or `<html …>`
+        if rest.starts_with('>') || rest.starts_with(' ') || rest.starts_with('\n') {
+            return format!("<html data-puddly-live=\"1\"{rest}");
+        }
+    }
+    if let Some(idx) = html.find("<html") {
+        let after = idx + 5;
+        return format!(
+            "{}<html data-puddly-live=\"1\"{}",
+            &html[..idx],
+            &html[after..]
+        );
+    }
+    if let Some(rest) = html.strip_prefix("<body") {
+        if rest.starts_with('>') || rest.starts_with(' ') || rest.starts_with('\n') {
+            return format!("<body data-puddly-live=\"1\"{rest}");
+        }
+    }
+    if let Some(idx) = html.find("<body") {
+        let after = idx + 5;
+        return format!(
+            "{}<body data-puddly-live=\"1\"{}",
+            &html[..idx],
+            &html[after..]
+        );
+    }
+    html.to_string()
+}
+
 /// Render a named view; if the root is not already `<html>`, wrap as a document.
+/// When the compiled view has `live: true`, injects `data-puddly-live="1"`.
 pub fn render_page(bundle: &ViewBundle, view_name: &str, props: &Value) -> ViewResult<String> {
+    let live = bundle
+        .views
+        .get(view_name)
+        .map(|m| m.live)
+        .unwrap_or(false);
     let html = render_view_html(bundle, view_name, props)?;
-    if html.trim_start().starts_with("<html") || html.trim_start().starts_with("<!DOCTYPE") {
+    let mut page = if html.trim_start().starts_with("<html") || html.trim_start().starts_with("<!DOCTYPE") {
         if html.contains("puddly-islands.js") {
-            Ok(html)
+            html
         } else if html.contains("</body>") {
-            Ok(html.replacen(
+            html.replacen(
                 "</body>",
                 "<script src=\"/puddly-islands.js\"></script></body>",
                 1,
-            ))
+            )
         } else {
-            Ok(format!(
-                "{html}<script src=\"/puddly-islands.js\"></script>"
-            ))
+            format!("{html}<script src=\"/puddly-islands.js\"></script>")
         }
     } else {
-        Ok(wrap_document(&html))
+        wrap_document(&html)
+    };
+    if live {
+        page = inject_live_attr(&page);
     }
+    Ok(page)
 }
