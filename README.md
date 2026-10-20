@@ -7,9 +7,9 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 20** — typed TS client (ADR-038): `puddly client generate` /
-`puddly build` emit `.puddly/generated/client.ts` (`api.todo.list`, `api.auth.login`,
-…). Prior: Step 19 `include` batch (ADR-037). Next = `puddly init` + CONVENTIONS.
+**Build plan Step 21** — `puddly init` + [`CONVENTIONS.md`](CONVENTIONS.md) (ADR-039).
+Should-haves 19–21 done. Prior: Step 20 typed client (ADR-038). Post-MVP (SSE, REST,
+row codegen, prod hardening) not started.
 
 ## Try the todo slice
 
@@ -19,6 +19,8 @@ migrate apply → `puddly build` → `puddly serve` → open `/register`.
 ## Quick start
 
 ```bash
+# New app:
+cargo run -p puddly-cli -- init ./my-app
 cargo run -p puddly-cli -- check examples/todo-slice
 cargo run -p puddly-cli -- explain E0212
 # Package sidecar + typed client into gitignored .puddly/generated/:

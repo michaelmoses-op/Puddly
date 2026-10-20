@@ -6,7 +6,10 @@ docs/
 **/*.rs.bk
 
 # Generated framework output — commit `.puddly/manifest.json` (ADR-017); ignore caches
+# Patterns with a mid-slash are root-relative; use **/ so app subdirs match too.
 .puddly/cache/
 .puddly/generated/
+**/.puddly/cache/
+**/.puddly/generated/
 **/node_modules/
 .DS_Store
