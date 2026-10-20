@@ -124,7 +124,8 @@ async fn get_overlay_js() {
 }
 
 #[tokio::test]
-async fn ssr_injects_overlay_in_dev() {
+async fn ssr_injects_overlay_in_dev_when_load_available() {
+    // View-only (no DB): todo `load` needs list → 503, still injects overlay into HTML.
     let handles = load_view_only();
     let req = HttpRequest {
         method: "GET".into(),
@@ -135,9 +136,47 @@ async fn ssr_injects_overlay_in_dev() {
     let resp = dispatch_http_dev(&req, handles.as_ref(), None)
         .await
         .unwrap();
-    assert_eq!(resp.status, 200);
+    assert_eq!(resp.status, 503, "{}", String::from_utf8_lossy(&resp.body));
     let body = String::from_utf8_lossy(&resp.body);
-    assert!(body.contains("Buy milk"), "{body}");
+    assert!(body.contains("Unavailable") || body.contains("database"), "{body}");
+    assert!(body.contains("/__dev/overlay.js"), "{body}");
+}
+
+#[tokio::test]
+async fn ssr_overlay_with_session_and_canned_data() {
+    let handles = load_handles();
+    let user = puddly_auth::AuthUser::new("owner-1", "o@x.co");
+    let token = {
+        let mut rpc = handles.rpc.as_ref().unwrap().lock().await;
+        puddly_auth::SessionStore::create(&mut rpc.sessions, &user, 3600)
+            .await
+            .unwrap()
+    };
+    let mut exec = RecordingExecutor::new();
+    let mut row = puddly_db::DbRow::new();
+    row.insert("id", puddly_db::SqlValue::Uuid("t1".into()));
+    row.insert("title", puddly_db::SqlValue::Text("Dev milk".into()));
+    row.insert("done", puddly_db::SqlValue::Bool(true));
+    row.insert("owner", puddly_db::SqlValue::Uuid("owner-1".into()));
+    exec.push_canned(vec![row]);
+
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "cookie".into(),
+        format!("{}={token}", puddly_core::SESSION_COOKIE_NAME),
+    );
+    let req = HttpRequest {
+        method: "GET".into(),
+        path: "/".into(),
+        headers,
+        body: Vec::new(),
+    };
+    let resp = dispatch_http_dev(&req, handles.as_ref(), Some(&mut exec))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 200, "{}", String::from_utf8_lossy(&resp.body));
+    let body = String::from_utf8_lossy(&resp.body);
+    assert!(body.contains("Dev milk"), "{body}");
     assert!(body.contains("/__dev/overlay.js"), "{body}");
 }
 

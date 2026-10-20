@@ -10,6 +10,7 @@ mod dev;
 mod error;
 mod http;
 mod serve;
+mod view_load;
 mod watch;
 
 pub use dev::{

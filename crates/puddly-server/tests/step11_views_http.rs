@@ -1,7 +1,9 @@
-//! Step 11: GET SSR HTML + island runtime without Postgres.
+//! Step 11 (adjusted Step 14): GET SSR needs load+auth; islands JS still sync.
 
+use puddly_auth::{AuthUser, SessionStore};
 use puddly_check::check;
-use puddly_db::RecordingExecutor;
+use puddly_core::SESSION_COOKIE_NAME;
+use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::RpcServer;
 use puddly_server::{dispatch_http, try_dispatch_get, HttpRequest};
 use puddly_views::ViewBundle;
@@ -27,22 +29,6 @@ fn load_rpc() -> RpcServer {
 }
 
 #[test]
-fn get_root_ssr_without_executor() {
-    let views = ViewBundle::load(&example_root()).expect("views");
-    let req = HttpRequest {
-        method: "GET".into(),
-        path: "/".into(),
-        headers: BTreeMap::new(),
-        body: Vec::new(),
-    };
-    let resp = try_dispatch_get(&req, Some(&views)).unwrap().unwrap();
-    assert_eq!(resp.status, 200);
-    let body = String::from_utf8_lossy(&resp.body);
-    assert!(body.contains("Buy milk"), "{body}");
-    assert!(body.contains("data-puddly-island=\"TodoRow\""), "{body}");
-}
-
-#[test]
 fn get_islands_runtime_js() {
     let req = HttpRequest {
         method: "GET".into(),
@@ -57,14 +43,30 @@ fn get_islands_runtime_js() {
 }
 
 #[tokio::test]
-async fn dispatch_get_v_todo() {
-    let rpc = Mutex::new(load_rpc());
+async fn dispatch_get_v_todo_with_session_and_canned_rows() {
+    let mut rpc = load_rpc();
+    let user = AuthUser::new("owner-1", "o@x.co");
+    let token = rpc.sessions.create(&user, 3600).await.unwrap();
+    let rpc = Mutex::new(rpc);
+
     let mut exec = RecordingExecutor::new();
+    let mut row = DbRow::new();
+    row.insert("id", SqlValue::Uuid("t1".into()));
+    row.insert("title", SqlValue::Text("Step11 milk".into()));
+    row.insert("done", SqlValue::Bool(false));
+    row.insert("owner", SqlValue::Uuid("owner-1".into()));
+    exec.push_canned(vec![row]);
+
     let views = ViewBundle::load(&example_root()).unwrap();
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "cookie".into(),
+        format!("{SESSION_COOKIE_NAME}={token}"),
+    );
     let req = HttpRequest {
         method: "GET".into(),
         path: "/v/todo".into(),
-        headers: BTreeMap::new(),
+        headers,
         body: Vec::new(),
     };
     let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
@@ -73,5 +75,24 @@ async fn dispatch_get_v_todo() {
     assert_eq!(resp.status, 200);
     let body = String::from_utf8_lossy(&resp.body);
     assert!(body.contains("Todos"));
-    assert!(exec.log.is_empty(), "SSR must not hit the DB");
+    assert!(body.contains("Step11 milk"), "{body}");
+    assert!(!exec.log.is_empty(), "SSR load hits DB");
+}
+
+#[tokio::test]
+async fn anonymous_root_is_401_not_fixture() {
+    let rpc = Mutex::new(load_rpc());
+    let mut exec = RecordingExecutor::new();
+    let views = ViewBundle::load(&example_root()).unwrap();
+    let req = HttpRequest {
+        method: "GET".into(),
+        path: "/".into(),
+        headers: BTreeMap::new(),
+        body: Vec::new(),
+    };
+    let resp = dispatch_http(&req, &rpc, &mut exec, Some(&views))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 401);
+    assert!(!String::from_utf8_lossy(&resp.body).contains("Buy milk"));
 }
