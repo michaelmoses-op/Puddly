@@ -38,11 +38,7 @@ impl ActionCatalog {
 
 /// Resolve `./foo.action.ts` relative to the resource file, then to `root` if needed.
 pub fn resolve_action_path(root: &Path, resource_path: &Path, run: &str) -> PathBuf {
-    let resource_abs = if resource_path.is_absolute() {
-        resource_path.to_path_buf()
-    } else {
-        root.join(resource_path)
-    };
+    let resource_abs = resource_abs_path(root, resource_path);
     let base = resource_abs
         .parent()
         .map(Path::to_path_buf)
@@ -52,6 +48,18 @@ pub fn resolve_action_path(root: &Path, resource_path: &Path, run: &str) -> Path
         return candidate;
     }
     root.join(run.trim_start_matches("./"))
+}
+
+/// `discover_resource_files(root)` uses `read_dir`; when `root` is relative, paths are
+/// cwd-relative and already prefixed with `root` (e.g. `examples/app/features/x.resource.ts`).
+fn resource_abs_path(root: &Path, resource_path: &Path) -> PathBuf {
+    if resource_path.is_absolute() {
+        return resource_path.to_path_buf();
+    }
+    if let Ok(rest) = resource_path.strip_prefix(root) {
+        return root.join(rest);
+    }
+    root.join(resource_path)
 }
 
 pub fn load_actions(root: &Path, ir: &AppIr) -> ActionResult<ActionCatalog> {

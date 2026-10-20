@@ -49,11 +49,15 @@ pub fn parse_fingerprint(sql: &str) -> Option<String> {
 
 pub fn read_latest_fingerprint(root: &Path) -> io::Result<Option<String>> {
     let files = list_migrations(root)?;
-    let Some(latest) = files.last() else {
-        return Ok(None);
-    };
-    let sql = fs::read_to_string(&latest.path)?;
-    Ok(parse_fingerprint(&sql))
+    // Auth scaffold migrations (e.g. `0002_puddly_auth.sql`) have no schema fingerprint;
+    // use the latest resource migration that does.
+    for file in files.iter().rev() {
+        let sql = fs::read_to_string(&file.path)?;
+        if let Some(fp) = parse_fingerprint(&sql) {
+            return Ok(Some(fp));
+        }
+    }
+    Ok(None)
 }
 
 pub fn read_schema_json_from_file(path: &Path) -> io::Result<Option<SchemaIr>> {
@@ -72,8 +76,10 @@ pub fn parse_schema_json(sql: &str) -> Option<SchemaIr> {
 
 pub fn read_latest_schema_json(root: &Path) -> io::Result<Option<SchemaIr>> {
     let files = list_migrations(root)?;
-    let Some(latest) = files.last() else {
-        return Ok(None);
-    };
-    read_schema_json_from_file(&latest.path)
+    for file in files.iter().rev() {
+        if let Some(schema) = read_schema_json_from_file(&file.path)? {
+            return Ok(Some(schema));
+        }
+    }
+    Ok(None)
 }

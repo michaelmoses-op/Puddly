@@ -7,7 +7,12 @@ description = "Async database executor interface (Postgres first) for Puddly"
 
 [features]
 default = ["postgres"]
-postgres = ["dep:tokio-postgres", "dep:deadpool-postgres"]
+postgres = [
+    "dep:tokio-postgres",
+    "dep:deadpool-postgres",
+    "dep:uuid",
+    "dep:chrono",
+]
 
 [dependencies]
 async-trait = { workspace = true }
@@ -17,7 +22,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-postgres = { workspace = true, optional = true }
+tokio-postgres = { workspace = true, optional = true, features = [
+    "with-uuid-1",
+    "with-chrono-0_4",
+] }
+uuid = { version = "1", optional = true }
+chrono = { version = "0.4", optional = true, default-features = false, features = [
+    "clock",
+] }
 deadpool-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]

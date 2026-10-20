@@ -6,8 +6,31 @@ use crate::Executor;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use std::error::Error;
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use tokio_postgres::types::{to_sql_checked, IsNull, ToSql, Type};
 use tokio_postgres::{Client, NoTls, Row};
+use uuid::Uuid;
+
+fn sql_value_accepts(ty: &Type) -> bool {
+    <bool as ToSql>::accepts(ty)
+        || <i64 as ToSql>::accepts(ty)
+        || <f64 as ToSql>::accepts(ty)
+        || <String as ToSql>::accepts(ty)
+        || <Uuid as ToSql>::accepts(ty)
+        || <NaiveDate as ToSql>::accepts(ty)
+        || <DateTime<FixedOffset> as ToSql>::accepts(ty)
+        || matches!(
+            *ty,
+            Type::BOOL
+                | Type::DATE
+                | Type::TIMESTAMP
+                | Type::TIMESTAMPTZ
+                | Type::UUID
+                | Type::TEXT
+                | Type::VARCHAR
+                | Type::UNKNOWN
+        )
+}
 
 /// Async executor over a `tokio_postgres::Client` (owned or pooled).
 pub struct PostgresExecutor {
@@ -59,16 +82,51 @@ impl ToSql for SqlValue {
             SqlValue::Bool(b) => b.to_sql(ty, out),
             SqlValue::Int(i) => i.to_sql(ty, out),
             SqlValue::Float(f) => f.to_sql(ty, out),
-            SqlValue::Text(s) | SqlValue::Uuid(s) => s.to_sql(ty, out),
+            SqlValue::Text(s) => {
+                if *ty == Type::DATE {
+                    if s.is_empty() {
+                        return Ok(IsNull::Yes);
+                    }
+                    let d = NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            e.to_string(),
+                        )) as Box<dyn Error + Sync + Send>
+                    })?;
+                    return d.to_sql(ty, out);
+                }
+                if matches!(*ty, Type::TIMESTAMP | Type::TIMESTAMPTZ) {
+                    if s.is_empty() {
+                        return Ok(IsNull::Yes);
+                    }
+                    let dt = parse_timestamp(s).map_err(|e| {
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            e.to_string(),
+                        )) as Box<dyn Error + Sync + Send>
+                    })?;
+                    return dt.to_sql(ty, out);
+                }
+                s.to_sql(ty, out)
+            }
+            SqlValue::Uuid(s) => {
+                if *ty == Type::UUID {
+                    let id = Uuid::parse_str(s).map_err(|e| {
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            e.to_string(),
+                        )) as Box<dyn Error + Sync + Send>
+                    })?;
+                    id.to_sql(ty, out)
+                } else {
+                    s.to_sql(ty, out)
+                }
+            }
         }
     }
 
     fn accepts(ty: &Type) -> bool {
-        <bool as ToSql>::accepts(ty)
-            || <i64 as ToSql>::accepts(ty)
-            || <f64 as ToSql>::accepts(ty)
-            || <String as ToSql>::accepts(ty)
-            || matches!(*ty, Type::UNKNOWN)
+        sql_value_accepts(ty)
     }
 
     to_sql_checked!();
@@ -128,6 +186,27 @@ fn row_to_db(row: &Row) -> DbRow {
             SqlValue::Int(v)
         } else if let Ok(v) = row.try_get::<_, f64>(col.name()) {
             SqlValue::Float(v)
+        } else if let Ok(v) = row.try_get::<_, Uuid>(col.name()) {
+            SqlValue::Uuid(v.to_string())
+        } else if let Ok(v) = row.try_get::<_, Option<Uuid>>(col.name()) {
+            match v {
+                Some(u) => SqlValue::Uuid(u.to_string()),
+                None => SqlValue::Null,
+            }
+        } else if let Ok(v) = row.try_get::<_, NaiveDate>(col.name()) {
+            SqlValue::Text(v.format("%Y-%m-%d").to_string())
+        } else if let Ok(v) = row.try_get::<_, Option<NaiveDate>>(col.name()) {
+            match v {
+                Some(d) => SqlValue::Text(d.format("%Y-%m-%d").to_string()),
+                None => SqlValue::Null,
+            }
+        } else if let Ok(v) = row.try_get::<_, DateTime<FixedOffset>>(col.name()) {
+            SqlValue::Text(v.to_rfc3339())
+        } else if let Ok(v) = row.try_get::<_, Option<DateTime<FixedOffset>>>(col.name()) {
+            match v {
+                Some(dt) => SqlValue::Text(dt.to_rfc3339()),
+                None => SqlValue::Null,
+            }
         } else if let Ok(v) = row.try_get::<_, String>(col.name()) {
             SqlValue::Text(v)
         } else if let Ok(v) = row.try_get::<_, Option<String>>(col.name()) {
@@ -141,4 +220,10 @@ fn row_to_db(row: &Row) -> DbRow {
         db.insert(name, value);
     }
     db
+}
+
+fn parse_timestamp(s: &str) -> Result<DateTime<FixedOffset>, chrono::ParseError> {
+    DateTime::parse_from_rfc3339(s).or_else(|_| {
+        DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f %z")
+    })
 }

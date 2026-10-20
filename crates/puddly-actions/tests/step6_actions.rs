@@ -18,3 +18,13 @@ fn todo_slice_loads_archive_action() {
     let a = catalog.get("todo", "archive").unwrap();
     assert!(a.source.contains("run"));
 }
+
+#[test]
+fn todo_slice_loads_archive_action_with_relative_app_root() {
+    let ws = workspace_root();
+    std::env::set_current_dir(&ws).expect("cwd");
+    let root = Path::new("examples/todo-slice");
+    let ir = check(root).ir.expect("ir");
+    let catalog = catalog_from_app(root, &ir).unwrap();
+    assert!(catalog.get("todo", "archive").is_some());
+}

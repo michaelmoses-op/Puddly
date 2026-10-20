@@ -227,9 +227,11 @@ async fn create(
     let rule = require_rule(resource, "create")?;
     enforce(rule, ctx.user.as_ref(), None)?;
     let mut body = prepare_create_body(resource, body, ctx.user.as_ref())?;
-    // When `project` is omitted on create, ensure a personal project for the owner
-    // (ADR-036) so the example form does not need a magic hidden UUID.
     if let Some(user) = ctx.user.as_ref() {
+        // Auth accounts live in `puddly_auth_*`; app `user` rows are separate (FK targets).
+        ensure_app_user_record(user, book, exec).await?;
+        // When `project` is omitted on create, ensure a personal project for the owner
+        // (ADR-036) so the example form does not need a magic hidden UUID.
         ensure_default_project(resource, &mut body, user, book, exec).await?;
     }
     let stmt = book
@@ -246,6 +248,42 @@ async fn create(
     })
     .await?;
     Ok(json!({ "created": true, "id": body.get("id").cloned().unwrap_or(Value::Null) }))
+}
+
+/// Ensure a row in the app `user` resource matches the authenticated principal (by id).
+async fn ensure_app_user_record(
+    user: &AuthUser,
+    book: &StatementBook,
+    exec: &mut dyn Executor,
+) -> RpcResult<()> {
+    let find = match book.get("user", PreparedKind::FindById) {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+    let existing = query_prepared(exec, find, &[SqlValue::Uuid(user.id.clone())]).await?;
+    if !existing.is_empty() {
+        return Ok(());
+    }
+    let insert = match book.get("user", PreparedKind::Insert) {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+    let name = user
+        .email
+        .split('@')
+        .next()
+        .unwrap_or("user")
+        .chars()
+        .take(120)
+        .collect::<String>();
+    let body = json!({
+        "id": user.id,
+        "email": user.email,
+        "name": name,
+    });
+    let params = params_for_insert(insert, &body)?;
+    exec_prepared(exec, insert, &params).await?;
+    Ok(())
 }
 
 /// If `resource` has a required `project` ref and the body omits it, reuse or create

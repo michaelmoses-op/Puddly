@@ -95,7 +95,15 @@ pub fn compile_resource_statements(r: &ResourceIr) -> Vec<PreparedStatement> {
         param_names: insert_cols.iter().map(|s| (*s).to_string()).collect(),
     };
 
-    let set_cols: Vec<&str> = cols.iter().copied().filter(|c| *c != "id").collect();
+    // Omit `auto: true` fields (e.g. `createdAt`) — same rule as INSERT (ADR-036).
+    let set_cols: Vec<&str> = r
+        .fields
+        .iter()
+        .filter(|f| !matches!(f.kind, FieldKind::Computed { .. }))
+        .filter(|f| f.name != "id")
+        .filter(|f| f.options.auto != Some(true))
+        .map(|f| f.name.as_str())
+        .collect();
     let set_clause = set_cols
         .iter()
         .enumerate()

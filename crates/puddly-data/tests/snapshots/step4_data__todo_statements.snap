@@ -39,14 +39,13 @@ expression: "serde_json::to_string_pretty(&a.statements.iter().filter(|s| s.reso
     "name": "todo.update_by_id",
     "resource": "todo",
     "kind": "updateById",
-    "sql": "UPDATE \"todo\" SET \"title\" = $1, \"done\" = $2, \"dueDate\" = $3, \"project\" = $4, \"owner\" = $5, \"createdAt\" = $6 WHERE \"id\" = $7",
+    "sql": "UPDATE \"todo\" SET \"title\" = $1, \"done\" = $2, \"dueDate\" = $3, \"project\" = $4, \"owner\" = $5 WHERE \"id\" = $6",
     "paramNames": [
       "title",
       "done",
       "dueDate",
       "project",
       "owner",
-      "createdAt",
       "id"
     ]
   }

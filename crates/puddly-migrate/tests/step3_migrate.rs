@@ -59,3 +59,35 @@ fn generate_init_in_temp_and_detect_drift() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn auth_scaffold_migration_does_not_break_drift_check() {
+    let src = workspace_root().join("examples/todo-slice");
+    let result = check(&src);
+    assert!(result.ok, "{}", result.text);
+    let ir = result.ir.unwrap();
+
+    let tmp = std::env::temp_dir().join(format!("puddly-migrate-auth-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let gen = generate_migration(&tmp, &ir, false).unwrap();
+    assert!(gen.path.is_some());
+    assert!(matches!(drift_status(&tmp, &ir), DriftStatus::Fresh));
+
+    let auth = tmp.join("migrations/0002_puddly_auth.sql");
+    std::fs::write(
+        &auth,
+        "-- puddly migration 0002_puddly_auth\n\
+         -- Opt-in framework auth tables.\n\
+         CREATE TABLE \"puddly_auth_accounts\" (\"id\" UUID PRIMARY KEY);\n",
+    )
+    .unwrap();
+
+    assert!(
+        matches!(drift_status(&tmp, &ir), DriftStatus::Fresh),
+        "auth-only migration must not clear schema fingerprint"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

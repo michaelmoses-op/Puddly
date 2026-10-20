@@ -85,6 +85,20 @@ async fn register_create_list_update_archive_list() {
         .expect("create returns id")
         .to_string();
 
+    let user_insert = exec
+        .log
+        .iter()
+        .find(|q| q.kind == "execute" && q.sql.contains("INSERT INTO \"user\""))
+        .expect("app user row INSERT (auth id → user FK)");
+    assert!(
+        user_insert
+            .params
+            .iter()
+            .any(|p| p == &SqlValue::Uuid(user_id.clone())),
+        "user id missing: {:?}",
+        user_insert.params
+    );
+
     let project_insert = exec
         .log
         .iter()

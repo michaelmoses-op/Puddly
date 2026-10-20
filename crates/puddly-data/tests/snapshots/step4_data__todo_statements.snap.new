@@ -1,0 +1,53 @@
+---
+source: crates/puddly-data/tests/step4_data.rs
+assertion_line: 31
+expression: "serde_json::to_string_pretty(&a.statements.iter().filter(|s| s.resource ==\n\"todo\").collect::<Vec<_>>()).unwrap()"
+---
+[
+  {
+    "name": "todo.delete_by_id",
+    "resource": "todo",
+    "kind": "deleteById",
+    "sql": "DELETE FROM \"todo\" WHERE \"id\" = $1",
+    "paramNames": [
+      "id"
+    ]
+  },
+  {
+    "name": "todo.find_by_id",
+    "resource": "todo",
+    "kind": "findById",
+    "sql": "SELECT \"id\", \"title\", \"done\", \"dueDate\", \"project\", \"owner\", \"createdAt\" FROM \"todo\" WHERE \"id\" = $1",
+    "paramNames": [
+      "id"
+    ]
+  },
+  {
+    "name": "todo.insert",
+    "resource": "todo",
+    "kind": "insert",
+    "sql": "INSERT INTO \"todo\" (\"id\", \"title\", \"done\", \"dueDate\", \"project\", \"owner\") VALUES ($1, $2, $3, $4, $5, $6)",
+    "paramNames": [
+      "id",
+      "title",
+      "done",
+      "dueDate",
+      "project",
+      "owner"
+    ]
+  },
+  {
+    "name": "todo.update_by_id",
+    "resource": "todo",
+    "kind": "updateById",
+    "sql": "UPDATE \"todo\" SET \"title\" = $1, \"done\" = $2, \"dueDate\" = $3, \"project\" = $4, \"owner\" = $5 WHERE \"id\" = $6",
+    "paramNames": [
+      "title",
+      "done",
+      "dueDate",
+      "project",
+      "owner",
+      "id"
+    ]
+  }
+]
