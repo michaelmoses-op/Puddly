@@ -16,6 +16,7 @@ use puddly_migrate::{
 use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
 };
+use puddly_actions::ACTION_SIDECAR_ENV;
 use puddly_rpc::RpcServer;
 use puddly_server::{serve, ServerConfig};
 use std::path::PathBuf;
@@ -406,13 +407,20 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
             let ir = result.ir.expect("ok implies ir");
-            let mut rpc = match RpcServer::from_app(&path, ir) {
+            // Prefer Node sidecar for custom actions (`tools/puddly-action-sidecar.mjs`
+            // or `$PUDDLY_ACTION_SIDECAR`).
+            let mut rpc = match RpcServer::from_app_with_sidecar(&path, ir) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::from(1);
                 }
             };
+            if !rpc.runner.is_configured() {
+                eprintln!(
+                    "warning: action sidecar not configured — set {ACTION_SIDECAR_ENV} or keep tools/puddly-action-sidecar.mjs"
+                );
+            }
             rpc.secure_cookies = secure_cookies;
             let exec: Box<dyn Executor + Send> = match PostgresExecutor::connect(&url) {
                 Ok(e) => Box::new(e),

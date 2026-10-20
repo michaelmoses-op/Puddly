@@ -1166,6 +1166,7 @@ name = "puddly-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "puddly-actions",
  "puddly-auth",
  "puddly-check",
  "puddly-core",

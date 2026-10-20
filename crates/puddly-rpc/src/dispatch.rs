@@ -7,8 +7,8 @@ use crate::crud::handle_crud;
 use crate::csrf::check_csrf;
 use crate::error::{RpcError, RpcResult};
 use crate::request::{RpcRequest, RpcResponse, RpcTarget};
-use puddly_actions::{ActionCall, ActionCatalog, ActionRunner};
-use puddly_auth::SessionStore;
+use puddly_actions::{ActionCall, ActionCatalog, ActionRunner, IpcUser};
+use puddly_auth::{AuthUser, SessionStore};
 use puddly_data::{query_prepared, PreparedKind, StatementBook};
 use puddly_db::{Executor, SqlValue};
 use puddly_ir::{ActionIr, AppIr, ResourceIr};
@@ -101,6 +101,7 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
                 input: &req.body,
                 source_path: &loaded.path,
                 source: &loaded.source,
+                user: ctx.user.as_ref().map(auth_user_to_ipc),
             })?;
             return Ok(RpcResponse::ok(data));
         }
@@ -158,6 +159,14 @@ fn enforce_action_access(
             };
             enforce(rule, ctx.user.as_ref(), row_values.as_ref())
         }
+    }
+}
+
+fn auth_user_to_ipc(user: &AuthUser) -> IpcUser {
+    IpcUser {
+        id: user.id.clone(),
+        email: user.email.clone(),
+        roles: user.roles.clone(),
     }
 }
 
