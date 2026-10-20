@@ -110,7 +110,11 @@ expression: render_json(&r)
             "name": "id",
             "kind": "id"
           }
-        ]
+        ],
+        "access": {
+          "kind": "owner",
+          "field": "owner"
+        }
       }
     ],
     "refs": [

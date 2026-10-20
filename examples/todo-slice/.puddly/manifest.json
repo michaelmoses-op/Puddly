@@ -169,7 +169,11 @@
               "name": "id",
               "kind": "id"
             }
-          ]
+          ],
+          "access": {
+            "kind": "owner",
+            "field": "owner"
+          }
         }
       ],
       "refs": [

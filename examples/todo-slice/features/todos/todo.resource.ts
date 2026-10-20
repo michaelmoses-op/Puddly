@@ -17,6 +17,10 @@ export const Todo = resource("todo", {
     delete: rule.owner("owner"),
   },
   actions: {
-    archive: { input: { id: field.id() }, run: "./archive.action.ts" },
+    archive: {
+      input: { id: field.id() },
+      run: "./archive.action.ts",
+      access: rule.owner("owner"),
+    },
   },
 })

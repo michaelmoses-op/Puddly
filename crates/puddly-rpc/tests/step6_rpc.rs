@@ -122,6 +122,11 @@ fn custom_action_requires_auth_and_runner() {
 
     let user = puddly_auth::AuthUser::new("me", "me@x.co");
     let token = server.sessions.create(&user, 3600).unwrap();
+    // owner access loads the row first
+    let mut row = DbRow::new();
+    row.insert("id", SqlValue::Uuid("t1".into()));
+    row.insert("owner", SqlValue::Uuid("me".into()));
+    exec.push_canned(vec![row]);
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1")
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
@@ -155,6 +160,10 @@ fn native_action_runner_executes_archive() {
         secure_cookies: false,
     };
     let mut exec = RecordingExecutor::new();
+    let mut row = DbRow::new();
+    row.insert("id", SqlValue::Uuid("abc".into()));
+    row.insert("owner", SqlValue::Uuid("me".into()));
+    exec.push_canned(vec![row]);
     let req = RpcRequest::new("todo.archive", json!({"id": "abc"}))
         .with_header(CSRF_HEADER_NAME, "1")
         .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));

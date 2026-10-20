@@ -109,4 +109,6 @@ pub struct ActionIr {
     pub input: Vec<FieldIr>,
     pub run: String,
     pub run_span: Span,
+    /// Optional declarative access (ADR-025). When `None`, RPC requires any authenticated user.
+    pub access: Option<RuleIr>,
 }

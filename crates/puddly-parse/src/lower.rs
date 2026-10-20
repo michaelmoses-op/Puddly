@@ -922,13 +922,14 @@ fn lower_actions(
                 ErrorCode::E0101,
                 path.to_path_buf(),
                 ox_span(p.span),
-                "action config must be an object `{ input, run }`",
+                "action config must be an object `{ input, run, access? }`",
             ));
             continue;
         };
         let mut input = Vec::new();
         let mut run = None;
         let mut run_span = Span::dummy();
+        let mut access = None;
 
         for cp in &cfg.properties {
             let ObjectPropertyKind::ObjectProperty(cp) = cp else {
@@ -954,6 +955,10 @@ fn lower_actions(
                         "`run` must be a string path to an action file",
                     )),
                 },
+                "access" => match lower_rule(&cp.value, path) {
+                    Ok(rule) => access = Some(rule),
+                    Err(mut d) => diags.append(&mut d),
+                },
                 other => diags.push(
                     Diagnostic::error(
                         ErrorCode::E0101,
@@ -961,7 +966,7 @@ fn lower_actions(
                         ox_span(cp.span),
                         format!("unknown action key `{other}`"),
                     )
-                    .with_suggestion("allowed: input, run", None),
+                    .with_suggestion("allowed: input, run, access", None),
                 ),
             }
         }
@@ -988,6 +993,7 @@ fn lower_actions(
             input,
             run,
             run_span,
+            access,
         });
     }
 

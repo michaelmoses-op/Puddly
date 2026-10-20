@@ -173,7 +173,11 @@ expression: render_manifest_json(&a)
               "name": "id",
               "kind": "id"
             }
-          ]
+          ],
+          "access": {
+            "kind": "owner",
+            "field": "owner"
+          }
         }
       ],
       "refs": [

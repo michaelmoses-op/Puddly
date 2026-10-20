@@ -7,9 +7,9 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 7** — minimal sync HTTP server (`puddly serve`) over the RPC library,
-owner/member list SQL predicates, reserved `auth` name (E0211), optional register
-`userId`, and `rule.member` placeholder docs (`puddly explain E0212`).
+**Build plan Step 8** — list QueryBuilder filters AND with owner/member predicates;
+action IPC JSONL protocol stub (`IpcActionRunner`); optional per-action `access` rules
+(ADR-025).
 
 ## Quick start
 
@@ -38,8 +38,8 @@ crates/
   puddly-db/           # Executor trait + Postgres + recording drivers
   puddly-data/         # compiled statements + closed-vocabulary builder
   puddly-auth/         # email/password, cookie sessions, access rules, auth scaffold
-  puddly-actions/      # load / index declared *.action.ts files
-  puddly-rpc/          # RPC dispatch (CSRF, auth context, CRUD, auth ops)
+  puddly-actions/      # load *.action.ts + IPC protocol stub
+  puddly-rpc/          # RPC dispatch (CSRF, auth, CRUD, actions)
   puddly-server/       # sync HTTP adapter (ADR-024)
   puddly-cli/          # `puddly` binary
 examples/todo-slice/   # sample app + manifest + migrations
