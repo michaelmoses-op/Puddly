@@ -1,5 +1,5 @@
 use puddly_db::{RecordingExecutor, SqlValue};
-use puddly_migrate::{apply_migrations, sql_body_for_apply};
+use puddly_migrate::{apply_migrations, apply_migrations_dry_run, sql_body_for_apply};
 use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
@@ -44,4 +44,41 @@ fn apply_migrations_records_ledger_and_sql() {
         q.sql.contains("INSERT INTO \"puddly_migrations\"")
             && q.params == vec![SqlValue::Text("0001_init.sql".into())]
     }));
+}
+
+#[test]
+fn dry_run_lists_pending_without_executing_bodies() {
+    let root = workspace_root().join("examples/todo-slice");
+    let mut exec = RecordingExecutor::new();
+    // Ledger query → empty (nothing applied yet)
+    exec.push_canned(vec![]);
+    let result = apply_migrations_dry_run(&root, &mut exec).unwrap();
+    assert!(result.message.starts_with("dry-run:"));
+    assert!(!result.applied.is_empty());
+    assert!(result.applied.iter().any(|n| n.contains("0001_init")));
+
+    // Only the ledger SELECT — no CREATE TABLE body, no INSERT into ledger
+    assert!(exec
+        .log
+        .iter()
+        .any(|q| q.sql.contains("FROM \"puddly_migrations\"")));
+    assert!(!exec
+        .log
+        .iter()
+        .any(|q| q.sql.contains("INSERT INTO \"puddly_migrations\"")));
+    assert!(!exec.log.iter().any(|q| {
+        q.kind == "execute" && q.sql.contains("CREATE TABLE") && !q.sql.contains("puddly_migrations")
+    }));
+}
+
+#[test]
+fn dry_run_skips_already_applied() {
+    let root = workspace_root().join("examples/todo-slice");
+    let mut exec = RecordingExecutor::new();
+    let mut row = puddly_db::DbRow::new();
+    row.insert("name", SqlValue::Text("0001_init.sql".into()));
+    exec.push_canned(vec![row]);
+    let result = apply_migrations_dry_run(&root, &mut exec).unwrap();
+    assert!(result.skipped.iter().any(|n| n.contains("0001_init")));
+    assert!(!result.applied.iter().any(|n| n.contains("0001_init")));
 }

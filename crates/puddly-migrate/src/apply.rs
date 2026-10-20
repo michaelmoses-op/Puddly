@@ -91,6 +91,41 @@ pub fn apply_migrations(root: &Path, exec: &mut dyn Executor) -> DbResult<ApplyR
     })
 }
 
+/// Report which migration files would run — no SQL body execution, no ledger writes.
+///
+/// Does not create `puddly_migrations`. If the ledger table is missing, every file
+/// is treated as pending (same outcome as a fresh database).
+pub fn apply_migrations_dry_run(root: &Path, exec: &mut dyn Executor) -> DbResult<ApplyResult> {
+    let done = match applied_names(exec) {
+        Ok(set) => set,
+        Err(_) => std::collections::BTreeSet::new(),
+    };
+    let files = list_migrations(root).map_err(|e| puddly_db::DbError::msg(e.to_string()))?;
+
+    let mut applied = Vec::new();
+    let mut skipped = Vec::new();
+
+    for file in &files {
+        if done.contains(&file.name) {
+            skipped.push(file.name.clone());
+        } else {
+            applied.push(file.name.clone());
+        }
+    }
+
+    let message = if applied.is_empty() {
+        "dry-run: no pending migrations".into()
+    } else {
+        format!("dry-run: would apply {} migration(s)", applied.len())
+    };
+
+    Ok(ApplyResult {
+        applied,
+        skipped,
+        message,
+    })
+}
+
 fn apply_one(exec: &mut dyn Executor, file: &MigrationFile) -> DbResult<()> {
     let raw = fs::read_to_string(&file.path).map_err(|e| puddly_db::DbError::msg(e.to_string()))?;
     let body = sql_body_for_apply(&raw);
