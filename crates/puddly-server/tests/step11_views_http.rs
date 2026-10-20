@@ -40,6 +40,9 @@ fn get_islands_runtime_js() {
     assert_eq!(resp.status, 200);
     let body = String::from_utf8_lossy(&resp.body);
     assert!(body.contains("data-puddly-island"));
+    // Step 16: mutation helper ships in the same runtime.
+    assert!(body.contains("X-Puddly-CSRF"));
+    assert!(body.contains("credentials"));
 }
 
 #[tokio::test]

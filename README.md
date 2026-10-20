@@ -7,10 +7,11 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 15** — list dialect (ADR-033): `{props.todos.items.map((item) =>
-<TodoRow … />)}` lowers to `NodeIr::Map` and SSR-binds each element; Step 14 scalar
-island bridge removed. Views still declare `export const load` (ADR-032); anonymous →
-401 HTML. Pipeline 1–13 complete; MVP track through Step 15.
+**Build plan Step 16** — UI mutation loop (ADR-034): `puddlyIslands.rpc` + declarative
+`data-puddly-rpc` / forms POST `/rpc/<op>` with `X-Puddly-CSRF` and session cookies;
+todo example create / toggle done / archive; create injects `owner` from session.
+Views still `export const load` (ADR-032) + list `.map` (ADR-033). Pipeline 1–13
+complete; MVP track through Step 16 (auth screens = Step 17).
 
 ## Quick start
 
@@ -68,7 +69,7 @@ crates/
   puddly-views/        # *.view.tsx / *.island.tsx discover + Oxc compile + SSR
   puddly-cli/          # `puddly` binary
 examples/todo-slice/   # sample app + manifest + migrations + todo view/island
-tools/                 # action sidecar + puddly-islands.js
+tools/                 # action sidecar + puddly-islands.js (hydrate + RPC mutations)
 tests/fixtures/        # invalid fixtures per error code
 ```
 

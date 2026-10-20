@@ -5,11 +5,12 @@ use crate::context::RpcContext;
 use crate::error::{RpcError, RpcResult};
 use crate::list_body::apply_list_body;
 use futures::future::FutureExt;
+use puddly_auth::{generate_user_id, AuthUser};
 use puddly_data::{
     exec_prepared, query_prepared, PreparedKind, QueryBuilder, StatementBook,
 };
 use puddly_db::{with_transaction, DbRow, Executor, SqlValue};
-use puddly_ir::ResourceIr;
+use puddly_ir::{FieldKind, LiteralValue, ResourceIr};
 use serde_json::{json, Map, Value};
 
 pub async fn handle_crud(
@@ -95,11 +96,12 @@ async fn create(
 ) -> RpcResult<Value> {
     let rule = require_rule(resource, "create")?;
     enforce(rule, ctx.user.as_ref(), None)?;
+    let body = prepare_create_body(resource, body, ctx.user.as_ref())?;
     let stmt = book
         .get(&resource.name, PreparedKind::Insert)
         .ok_or_else(|| RpcError::msg(format!("no insert statement for {}", resource.name)))?
         .clone();
-    let params = params_for_insert(&stmt, body)?;
+    let params = params_for_insert(&stmt, &body)?;
     with_transaction(exec, |tx| {
         async move {
             exec_prepared(tx, &stmt, &params).await?;
@@ -108,7 +110,7 @@ async fn create(
         .boxed()
     })
     .await?;
-    Ok(json!({ "created": true }))
+    Ok(json!({ "created": true, "id": body.get("id").cloned().unwrap_or(Value::Null) }))
 }
 
 async fn update(
@@ -135,7 +137,9 @@ async fn update(
     let stmt = book
         .get(&resource.name, PreparedKind::UpdateById)
         .ok_or_else(|| RpcError::msg(format!("no update statement for {}", resource.name)))?;
-    let params = params_for_update(stmt, body, &id)?;
+    // Merge body over existing row so partial updates (e.g. `{ id, done }`) do not null out
+    // other columns.
+    let params = params_for_update(stmt, body, &id, &existing)?;
     exec_prepared(exec, stmt, &params).await?;
     Ok(json!({ "updated": true }))
 }
@@ -199,6 +203,70 @@ fn json_to_sql(v: &Value) -> SqlValue {
     }
 }
 
+/// Fill create body: session `owner` when missing, generate `id`, apply field defaults.
+fn prepare_create_body(
+    resource: &ResourceIr,
+    body: &Value,
+    user: Option<&AuthUser>,
+) -> RpcResult<Value> {
+    let mut obj = match body {
+        Value::Object(m) => m.clone(),
+        Value::Null => Map::new(),
+        _ => {
+            return Err(RpcError::BadRequest(
+                "body must be an object".into(),
+            ))
+        }
+    };
+
+    if let Some(user) = user {
+        if resource.fields.iter().any(|f| f.name == "owner") && value_missing(obj.get("owner")) {
+            obj.insert("owner".into(), Value::String(user.id.clone()));
+        }
+    }
+
+    if resource
+        .fields
+        .iter()
+        .any(|f| matches!(f.kind, FieldKind::Id))
+        && value_missing(obj.get("id"))
+    {
+        obj.insert("id".into(), Value::String(generate_user_id()));
+    }
+
+    for field in &resource.fields {
+        if matches!(field.kind, FieldKind::Computed { .. }) {
+            continue;
+        }
+        if !value_missing(obj.get(&field.name)) {
+            continue;
+        }
+        if let Some(def) = &field.options.default {
+            obj.insert(field.name.clone(), literal_to_json(def));
+        }
+    }
+
+    Ok(Value::Object(obj))
+}
+
+fn value_missing(v: Option<&Value>) -> bool {
+    match v {
+        None => true,
+        Some(Value::Null) => true,
+        Some(Value::String(s)) if s.is_empty() => true,
+        _ => false,
+    }
+}
+
+fn literal_to_json(lit: &LiteralValue) -> Value {
+    match lit {
+        LiteralValue::Bool(b) => Value::Bool(*b),
+        LiteralValue::Int(i) => json!(i),
+        LiteralValue::Float(s) | LiteralValue::String(s) => Value::String(s.clone()),
+        LiteralValue::Null => Value::Null,
+    }
+}
+
 fn params_for_insert(
     stmt: &puddly_data::PreparedStatement,
     body: &Value,
@@ -218,6 +286,7 @@ fn params_for_update(
     stmt: &puddly_data::PreparedStatement,
     body: &Value,
     id: &str,
+    existing: &DbRow,
 ) -> RpcResult<Vec<SqlValue>> {
     let obj = body
         .as_object()
@@ -228,8 +297,17 @@ fn params_for_update(
             params.push(SqlValue::Uuid(id.to_string()));
             continue;
         }
-        let v = obj.get(name).unwrap_or(&Value::Null);
-        params.push(json_to_sql(v));
+        if let Some(v) = obj.get(name) {
+            if !v.is_null() {
+                params.push(json_to_sql(v));
+                continue;
+            }
+        }
+        if let Some(prev) = existing.get(name) {
+            params.push(prev.clone());
+        } else {
+            params.push(SqlValue::Null);
+        }
     }
     Ok(params)
 }

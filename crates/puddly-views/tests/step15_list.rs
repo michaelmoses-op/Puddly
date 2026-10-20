@@ -45,6 +45,7 @@ fn parses_todos_items_map_into_ir() {
                 NodeIr::Island { name, props } => {
                     assert_eq!(name, "TodoRow");
                     assert!(!props.iter().any(|a| a.name == "key"));
+                    assert!(props.iter().any(|a| a.name == "id"));
                     assert!(props.iter().any(|a| a.name == "title"));
                     assert!(props.iter().any(|a| a.name == "done"));
                 }
