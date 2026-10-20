@@ -12,6 +12,7 @@ puddly-check = { workspace = true }
 puddly-core = { workspace = true }
 puddly-db = { workspace = true }
 puddly-rpc = { workspace = true }
+puddly-views = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

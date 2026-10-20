@@ -52,6 +52,39 @@ impl HttpResponse {
             set_cookies: Vec::new(),
         }
     }
+
+    pub fn html(status: u16, reason: &'static str, body: impl Into<String>) -> Self {
+        let body = body.into().into_bytes();
+        let mut headers = BTreeMap::new();
+        headers.insert("content-type".into(), "text/html; charset=utf-8".into());
+        headers.insert("content-length".into(), body.len().to_string());
+        headers.insert("connection".into(), "close".into());
+        Self {
+            status,
+            reason,
+            headers,
+            body,
+            set_cookies: Vec::new(),
+        }
+    }
+
+    pub fn js(status: u16, reason: &'static str, body: impl Into<String>) -> Self {
+        let body = body.into().into_bytes();
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "content-type".into(),
+            "application/javascript; charset=utf-8".into(),
+        );
+        headers.insert("content-length".into(), body.len().to_string());
+        headers.insert("connection".into(), "close".into());
+        Self {
+            status,
+            reason,
+            headers,
+            body,
+            set_cookies: Vec::new(),
+        }
+    }
 }
 
 /// Read one HTTP/1.1 request from `reader` (Content-Length body).

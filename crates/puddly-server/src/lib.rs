@@ -12,4 +12,4 @@ pub use error::{ServerError, ServerResult};
 pub use http::{
     parse_http_request, parse_http_request_bytes, write_http_response, HttpRequest, HttpResponse,
 };
-pub use serve::{dispatch_http, serve, serve_once, ServerConfig};
+pub use serve::{dispatch_http, serve, serve_once, try_dispatch_get, ServerConfig};
