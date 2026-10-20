@@ -1,34 +1,71 @@
-//! Action IPC JSONL protocol + Node sidecar runner (Steps 8–10).
+//! Action IPC JSONL protocol + Node sidecar runner (Steps 8–13).
 //!
-//! Protocol:
-//! - Host writes one request line to the sidecar stdin.
-//! - Sidecar writes one response line to stdout.
+//! Protocol v2 (ADR-031):
+//! - Host and sidecar exchange JSONL on stdin/stdout.
+//! - Every request/response carries `id` (string or u64) for multiplexing.
+//! - Long-lived worker is the default; set `PUDDLY_ACTION_SIDECAR_ONESHOT=1`
+//!   for process-per-call.
 //!
-//! In-repo sidecar: `tools/puddly-action-sidecar.mjs` (Node 22+ with
-//! `--experimental-strip-types` so `*.action.ts` can be imported).
-//!
-//! Step 10: [`ActionRunner::run`] is async; sync `std::process::Command` runs
-//! inside `tokio::task::spawn_blocking`. Protocol and error shapes are unchanged
-//! — do **not** freeze [`ActionError`] / IPC error codes in this step.
+//! Sidecar template: `tools/puddly-action-sidecar.mjs`.
+//! Generated copy: `.puddly/generated/action-sidecar.mjs` (`puddly build`).
 
 use crate::error::{ActionError, ActionResult};
+use crate::error_codes::IpcErrorCode;
 use crate::{ActionCall, ActionRunner};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+use std::sync::Mutex;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 /// Protocol version — bump when the JSON shape changes incompatibly.
-pub const IPC_PROTOCOL_VERSION: u32 = 1;
+pub const IPC_PROTOCOL_VERSION: u32 = 2;
 
 /// Env var: space-separated argv for the sidecar process.
 /// Example: `node --experimental-strip-types /path/to/tools/puddly-action-sidecar.mjs`
 pub const ACTION_SIDECAR_ENV: &str = "PUDDLY_ACTION_SIDECAR";
 
+/// When set to `1` / `true` / `yes`, spawn a fresh sidecar process per call.
+pub const ACTION_SIDECAR_ONESHOT_ENV: &str = "PUDDLY_ACTION_SIDECAR_ONESHOT";
+
 /// Relative path of the in-repo sidecar script (from workspace / app root).
 pub const DEFAULT_SIDECAR_SCRIPT: &str = "tools/puddly-action-sidecar.mjs";
+
+/// Relative path of the packaging-B generated sidecar.
+pub const GENERATED_SIDECAR_SCRIPT: &str = ".puddly/generated/action-sidecar.mjs";
+
+/// Request/response correlation id (string or u64 on the wire).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(untagged)]
+pub enum IpcId {
+    Str(String),
+    Num(u64),
+}
+
+impl IpcId {
+    pub fn from_u64(n: u64) -> Self {
+        Self::Num(n)
+    }
+
+    pub fn as_display(&self) -> String {
+        match self {
+            Self::Str(s) => s.clone(),
+            Self::Num(n) => n.to_string(),
+        }
+    }
+}
+
+impl PartialEq<str> for IpcId {
+    fn eq(&self, other: &str) -> bool {
+        match self {
+            Self::Str(s) => s == other,
+            Self::Num(n) => n.to_string() == other,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +80,7 @@ pub struct IpcUser {
 #[serde(rename_all = "camelCase")]
 pub struct IpcRequest {
     pub v: u32,
+    pub id: IpcId,
     pub op: String,
     pub resource: String,
     pub action: String,
@@ -66,6 +104,7 @@ pub struct IpcErrorBody {
 #[serde(rename_all = "camelCase")]
 pub struct IpcResponse {
     pub v: u32,
+    pub id: IpcId,
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
@@ -75,8 +114,13 @@ pub struct IpcResponse {
 
 impl IpcRequest {
     pub fn run(call: &ActionCall<'_>) -> Self {
+        Self::run_with_id(call, IpcId::Num(0))
+    }
+
+    pub fn run_with_id(call: &ActionCall<'_>, id: IpcId) -> Self {
         Self {
             v: IPC_PROTOCOL_VERSION,
+            id,
             op: "run".into(),
             resource: call.resource.to_string(),
             action: call.action.to_string(),
@@ -100,22 +144,24 @@ impl IpcRequest {
 }
 
 impl IpcResponse {
-    pub fn ok_data(data: Value) -> Self {
+    pub fn ok_data(id: IpcId, data: Value) -> Self {
         Self {
             v: IPC_PROTOCOL_VERSION,
+            id,
             ok: true,
             data: Some(data),
             error: None,
         }
     }
 
-    pub fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn err(id: IpcId, code: IpcErrorCode, message: impl Into<String>) -> Self {
         Self {
             v: IPC_PROTOCOL_VERSION,
+            id,
             ok: false,
             data: None,
             error: Some(IpcErrorBody {
-                code: code.into(),
+                code: code.as_str().to_string(),
                 message: message.into(),
             }),
         }
@@ -142,20 +188,54 @@ impl IpcResponse {
     }
 }
 
+struct LiveWorker {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    next_id: u64,
+}
+
 /// Runner that speaks the IPC protocol via an argv (typically `node … sidecar.mjs`).
 ///
 /// - [`IpcActionRunner::stub`]: no process — returns `sidecar_not_configured`.
-/// - [`IpcActionRunner::argv`]: spawn `argv[0]` with the remaining args per call.
+/// - [`IpcActionRunner::argv`]: spawn `argv[0]` with the remaining args.
 /// - [`IpcActionRunner::node_sidecar`]: convenience for the in-repo script.
 /// - [`IpcActionRunner::from_env`]: parse [`ACTION_SIDECAR_ENV`], else stub.
-#[derive(Debug, Clone)]
+/// - Default mode: long-lived worker (one process, many JSONL requests).
+/// - Oneshot: [`ACTION_SIDECAR_ONESHOT_ENV`] or [`IpcActionRunner::with_oneshot`].
 pub struct IpcActionRunner {
     argv: Option<Vec<String>>,
+    oneshot: bool,
+    worker: Mutex<Option<LiveWorker>>,
+}
+
+impl std::fmt::Debug for IpcActionRunner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IpcActionRunner")
+            .field("argv", &self.argv)
+            .field("oneshot", &self.oneshot)
+            .field("live", &self.worker.lock().ok().and_then(|g| g.as_ref().map(|_| true)))
+            .finish()
+    }
+}
+
+impl Drop for IpcActionRunner {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.worker.lock() {
+            if let Some(mut w) = guard.take() {
+                let _ = w.child.start_kill();
+            }
+        }
+    }
 }
 
 impl IpcActionRunner {
     pub fn stub() -> Self {
-        Self { argv: None }
+        Self {
+            argv: None,
+            oneshot: oneshot_from_env(),
+            worker: Mutex::new(None),
+        }
     }
 
     /// Full argv, e.g. `["node", "--experimental-strip-types", "/abs/sidecar.mjs"]`.
@@ -163,6 +243,8 @@ impl IpcActionRunner {
         let argv: Vec<String> = parts.into_iter().map(Into::into).collect();
         Self {
             argv: if argv.is_empty() { None } else { Some(argv) },
+            oneshot: oneshot_from_env(),
+            worker: Mutex::new(None),
         }
     }
 
@@ -171,9 +253,25 @@ impl IpcActionRunner {
         Self::argv([program.into().display().to_string()])
     }
 
+    /// Force process-per-call (or clear it).
+    pub fn with_oneshot(mut self, oneshot: bool) -> Self {
+        self.oneshot = oneshot;
+        self
+    }
+
     /// In-repo Node sidecar under `root/tools/puddly-action-sidecar.mjs`.
     pub fn node_sidecar(root: &Path) -> Self {
         let script = root.join(DEFAULT_SIDECAR_SCRIPT);
+        Self::argv([
+            "node".into(),
+            "--experimental-strip-types".into(),
+            script.display().to_string(),
+        ])
+    }
+
+    /// Prefer generated `.puddly/generated/action-sidecar.mjs` under `root`.
+    pub fn generated_sidecar(root: &Path) -> Self {
+        let script = root.join(GENERATED_SIDECAR_SCRIPT);
         Self::argv([
             "node".into(),
             "--experimental-strip-types".into(),
@@ -192,15 +290,22 @@ impl IpcActionRunner {
         }
     }
 
-    /// `$PUDDLY_ACTION_SIDECAR` if set, otherwise [`node_sidecar`] when the script
-    /// is found at `root` or an ancestor (so `serve examples/todo-slice` still
-    /// picks up the monorepo `tools/puddly-action-sidecar.mjs`).
+    /// `$PUDDLY_ACTION_SIDECAR` if set; else prefer
+    /// `.puddly/generated/action-sidecar.mjs` (walk-up); else `tools/` script
+    /// (walk-up); else stub.
     pub fn from_env_or_workspace(root: &Path) -> Self {
         if std::env::var(ACTION_SIDECAR_ENV)
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false)
         {
             return Self::from_env();
+        }
+        if let Some(path) = find_generated_sidecar(root) {
+            return Self::argv([
+                "node".into(),
+                "--experimental-strip-types".into(),
+                path.display().to_string(),
+            ]);
         }
         match find_sidecar_workspace(root) {
             Some(ws) => Self::node_sidecar(&ws),
@@ -212,30 +317,29 @@ impl IpcActionRunner {
         self.argv.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
     }
 
-    /// Blocking IPC round-trip (runs on a blocking thread pool via `spawn_blocking`).
-    fn run_blocking(
-        argv: Option<Vec<String>>,
+    pub fn is_oneshot(&self) -> bool {
+        self.oneshot
+    }
+
+    /// OS pid of the long-lived worker, if running.
+    pub fn live_pid(&self) -> Option<u32> {
+        self.worker
+            .lock()
+            .ok()?
+            .as_ref()
+            .and_then(|w| w.child.id())
+    }
+
+    async fn run_oneshot(
+        argv: &[String],
         call_resource: &str,
         call_action: &str,
         call_path: &str,
-        req: IpcRequest,
+        mut req: IpcRequest,
     ) -> ActionResult<Value> {
+        let id = IpcId::Num(1);
+        req.id = id.clone();
         let line = req.encode_line()?;
-
-        let Some(argv) = argv else {
-            let _ = IpcResponse::err(
-                "sidecar_not_configured",
-                format!(
-                    "IPC protocol v{IPC_PROTOCOL_VERSION} ready; set {ACTION_SIDECAR_ENV} or use IpcActionRunner::node_sidecar for `{call_resource}.{call_action}`",
-                ),
-            )
-            .encode_line()?;
-            return Err(ActionError::NotExecutable {
-                resource: call_resource.to_string(),
-                action: call_action.to_string(),
-                path: call_path.to_string(),
-            });
-        };
 
         let (program, args) = argv
             .split_first()
@@ -246,6 +350,7 @@ impl IpcActionRunner {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| ActionError::msg(format!("ipc spawn `{program}`: {e}")))?;
 
@@ -256,8 +361,9 @@ impl IpcActionRunner {
                 .ok_or_else(|| ActionError::msg("ipc missing stdin"))?;
             stdin
                 .write_all(line.as_bytes())
+                .await
                 .map_err(|e| ActionError::msg(format!("ipc write: {e}")))?;
-            // Drop stdin so the sidecar sees EOF after one line.
+            // Drop stdin → EOF so oneshot sidecars can exit after one line.
         }
 
         let stdout = child
@@ -268,47 +374,151 @@ impl IpcActionRunner {
         let mut out_line = String::new();
         reader
             .read_line(&mut out_line)
+            .await
             .map_err(|e| ActionError::msg(format!("ipc read: {e}")))?;
-
-        let stderr = child.stderr.take().map(|err| {
-            let mut s = String::new();
-            let mut r = BufReader::new(err);
-            let _ = r.read_line(&mut s);
-            s
-        });
 
         let status = child
             .wait()
+            .await
             .map_err(|e| ActionError::msg(format!("ipc wait: {e}")))?;
         if !status.success() {
-            let err_hint = stderr.unwrap_or_default();
             return Err(ActionError::msg(format!(
-                "ipc sidecar exited with {status}: {err_hint}"
+                "ipc sidecar exited with {status} for `{call_resource}.{call_action}` ({call_path})"
             )));
         }
 
-        let resp = IpcResponse::decode_line(&out_line)?;
-        if resp.ok {
-            Ok(resp.data.unwrap_or_else(|| json!({})))
-        } else {
+        finish_response(&out_line, &id)
+    }
+
+    async fn ensure_worker(argv: &[String]) -> ActionResult<LiveWorker> {
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| ActionError::msg("ipc argv empty"))?;
+
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| ActionError::msg(format!("ipc spawn `{program}`: {e}")))?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| ActionError::msg("ipc missing stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ActionError::msg("ipc missing stdout"))?;
+
+        Ok(LiveWorker {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            next_id: 1,
+        })
+    }
+
+    async fn run_live(
+        worker: &mut LiveWorker,
+        mut req: IpcRequest,
+    ) -> ActionResult<Value> {
+        let id = IpcId::Num(worker.next_id);
+        worker.next_id = worker.next_id.saturating_add(1);
+        req.id = id.clone();
+        let line = req.encode_line()?;
+
+        worker
+            .stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| ActionError::msg(format!("ipc write: {e}")))?;
+        worker
+            .stdin
+            .flush()
+            .await
+            .map_err(|e| ActionError::msg(format!("ipc flush: {e}")))?;
+
+        // Sequential protocol under the mutex: read until matching id (skip noise).
+        loop {
+            let mut out_line = String::new();
+            let n = worker
+                .stdout
+                .read_line(&mut out_line)
+                .await
+                .map_err(|e| ActionError::msg(format!("ipc read: {e}")))?;
+            if n == 0 {
+                return Err(ActionError::msg("ipc sidecar closed stdout"));
+            }
+            let resp = IpcResponse::decode_line(&out_line)?;
+            if resp.id != id {
+                continue;
+            }
+            if resp.ok {
+                return Ok(resp.data.unwrap_or_else(|| json!({})));
+            }
             let msg = resp
                 .error
                 .map(|e| format!("{}: {}", e.code, e.message))
                 .unwrap_or_else(|| "ipc error".into());
-            Err(ActionError::msg(msg))
+            return Err(ActionError::msg(msg));
         }
+    }
+}
+
+fn finish_response(out_line: &str, expected_id: &IpcId) -> ActionResult<Value> {
+    let resp = IpcResponse::decode_line(out_line)?;
+    if &resp.id != expected_id {
+        return Err(ActionError::msg(format!(
+            "ipc id mismatch: got {}, expected {}",
+            resp.id.as_display(),
+            expected_id.as_display()
+        )));
+    }
+    if resp.ok {
+        Ok(resp.data.unwrap_or_else(|| json!({})))
+    } else {
+        let msg = resp
+            .error
+            .map(|e| format!("{}: {}", e.code, e.message))
+            .unwrap_or_else(|| "ipc error".into());
+        Err(ActionError::msg(msg))
     }
 }
 
 /// Walk `start` and parents for a directory containing [`DEFAULT_SIDECAR_SCRIPT`].
 pub fn find_sidecar_workspace(start: &Path) -> Option<PathBuf> {
+    walk_for_file(start, DEFAULT_SIDECAR_SCRIPT)
+}
+
+/// Walk `start` and parents for [`.puddly/generated/action-sidecar.mjs`](GENERATED_SIDECAR_SCRIPT).
+pub fn find_generated_sidecar(start: &Path) -> Option<PathBuf> {
     let mut cur = if start.is_file() {
         start.parent()?.to_path_buf()
     } else {
         start.to_path_buf()
     };
     loop {
-        if cur.join(DEFAULT_SIDECAR_SCRIPT).is_file() {
+        let candidate = cur.join(GENERATED_SIDECAR_SCRIPT);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+fn walk_for_file(start: &Path, rel: &str) -> Option<PathBuf> {
+    let mut cur = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if cur.join(rel).is_file() {
             return Some(cur);
         }
         if !cur.pop() {
@@ -321,18 +531,63 @@ pub fn find_sidecar_workspace(start: &Path) -> Option<PathBuf> {
 impl ActionRunner for IpcActionRunner {
     async fn run(&mut self, call: ActionCall<'_>) -> ActionResult<Value> {
         let req = IpcRequest::run(&call);
-        let argv = self.argv.clone();
-        let resource = call.resource.to_string();
-        let action = call.action.to_string();
+        let resource = call.resource;
+        let action = call.action;
         let path = call.source_path.display().to_string();
 
-        // Sync Command stays blocking; wrap so the Tokio runtime is not stalled.
-        // Protocol untouched — ActionError / IPC codes are not frozen this step.
-        tokio::task::spawn_blocking(move || {
-            Self::run_blocking(argv, &resource, &action, &path, req)
-        })
-        .await
-        .map_err(|e| ActionError::msg(format!("ipc spawn_blocking join: {e}")))?
+        let Some(argv) = self.argv.clone() else {
+            let _ = IpcResponse::err(
+                IpcId::Num(0),
+                IpcErrorCode::SidecarNotConfigured,
+                format!(
+                    "IPC protocol v{IPC_PROTOCOL_VERSION} ready; set {ACTION_SIDECAR_ENV} or use IpcActionRunner::node_sidecar for `{resource}.{action}`",
+                ),
+            )
+            .encode_line()?;
+            return Err(ActionError::NotExecutable {
+                resource: resource.to_string(),
+                action: action.to_string(),
+                path,
+            });
+        };
+
+        if self.oneshot {
+            return Self::run_oneshot(&argv, resource, action, &path, req).await;
+        }
+
+        // Long-lived: take the worker out of the mutex (never hold std::sync::MutexGuard
+        // across `.await`), run the round-trip, then put it back. Contended callers
+        // either wait on the mutex or spawn briefly if the slot is empty mid-flight
+        // (ActionRunner is `&mut self`, so the common path is single-flight).
+        let existing = {
+            let mut guard = self
+                .worker
+                .lock()
+                .map_err(|_| ActionError::msg("ipc worker lock poisoned"))?;
+            guard.take()
+        };
+        let mut worker = match existing {
+            Some(w) => w,
+            None => Self::ensure_worker(&argv).await?,
+        };
+
+        let result = Self::run_live(&mut worker, req).await;
+
+        // Put the worker back unless the session is dead.
+        let restore = result.is_ok();
+        {
+            let mut guard = self
+                .worker
+                .lock()
+                .map_err(|_| ActionError::msg("ipc worker lock poisoned"))?;
+            if restore {
+                *guard = Some(worker);
+            } else {
+                let _ = worker.child.start_kill();
+                *guard = None;
+            }
+        }
+        result
     }
 }
 
@@ -341,13 +596,24 @@ fn shell_words(s: &str) -> Vec<String> {
     s.split_whitespace().map(str::to_string).collect()
 }
 
+fn oneshot_from_env() -> bool {
+    match std::env::var(ACTION_SIDECAR_ONESHOT_ENV) {
+        Ok(s) => {
+            let t = s.trim();
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+        }
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::str::FromStr;
 
     #[test]
-    fn roundtrip_request_response_lines() {
+    fn roundtrip_request_response_lines_v2() {
         let call = ActionCall {
             resource: "todo",
             action: "archive",
@@ -360,16 +626,43 @@ mod tests {
                 roles: vec![],
             }),
         };
-        let req = IpcRequest::run(&call);
+        let req = IpcRequest::run_with_id(&call, IpcId::Str("req-1".into()));
+        assert_eq!(req.v, 2);
+        assert_eq!(req.id, IpcId::Str("req-1".into()));
         assert_eq!(req.user.as_ref().unwrap().id, "u1");
         let line = req.encode_line().unwrap();
         assert!(line.ends_with('\n'));
         assert_eq!(line.matches('\n').count(), 1);
+        assert!(line.contains("\"id\":\"req-1\""));
 
-        let resp = IpcResponse::ok_data(json!({"archived": true}));
+        let resp = IpcResponse::ok_data(IpcId::Str("req-1".into()), json!({"archived": true}));
         let out = resp.encode_line().unwrap();
         let decoded = IpcResponse::decode_line(&out).unwrap();
         assert!(decoded.ok);
+        assert_eq!(decoded.id, IpcId::Str("req-1".into()));
         assert_eq!(decoded.data.unwrap()["archived"], true);
+
+        let num_id = IpcId::Num(42);
+        let resp2 = IpcResponse::ok_data(num_id.clone(), json!({}));
+        let decoded2 = IpcResponse::decode_line(&resp2.encode_line().unwrap()).unwrap();
+        assert_eq!(decoded2.id, num_id);
+    }
+
+    #[test]
+    fn error_codes_frozen_and_parseable() {
+        for code in IpcErrorCode::ALL {
+            assert_eq!(IpcErrorCode::from_str(code.as_str()).unwrap(), *code);
+        }
+        let resp = IpcResponse::err(
+            IpcId::Num(1),
+            IpcErrorCode::ImportFailed,
+            "boom",
+        );
+        assert_eq!(resp.error.as_ref().unwrap().code, "import_failed");
+    }
+
+    #[test]
+    fn protocol_version_is_two() {
+        assert_eq!(IPC_PROTOCOL_VERSION, 2);
     }
 }

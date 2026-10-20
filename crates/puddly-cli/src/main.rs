@@ -16,7 +16,7 @@ use puddly_migrate::{
 use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
 };
-use puddly_actions::ACTION_SIDECAR_ENV;
+use puddly_actions::{package_action_sidecar, ACTION_SIDECAR_ENV, GENERATED_SIDECAR_SCRIPT};
 use puddly_rpc::RpcServer;
 use puddly_server::{
     errors_from_check, serve, serve_dev, watch_dev_loop, DevHandles, DevState, ServerConfig,
@@ -113,6 +113,12 @@ enum Commands {
         /// Set Secure on session cookies (ignored in view-only mode)
         #[arg(long)]
         secure_cookies: bool,
+    },
+    /// Package action sidecar into `.puddly/generated/` (ADR-031 / Step 13)
+    Build {
+        /// App root (defaults to current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -427,8 +433,9 @@ async fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
             let ir = result.ir.expect("ok implies ir");
-            // Prefer Node sidecar for custom actions (`tools/puddly-action-sidecar.mjs`
-            // or `$PUDDLY_ACTION_SIDECAR`).
+            // Prefer generated `.puddly/generated/action-sidecar.mjs`, then
+            // `tools/puddly-action-sidecar.mjs`, or `$PUDDLY_ACTION_SIDECAR`.
+            // Long-lived worker by default (oneshot via PUDDLY_ACTION_SIDECAR_ONESHOT=1).
             let mut rpc = match RpcServer::from_app_with_sidecar(&path, ir) {
                 Ok(s) => s,
                 Err(e) => {
@@ -438,7 +445,11 @@ async fn main() -> ExitCode {
             };
             if !rpc.runner.is_configured() {
                 eprintln!(
-                    "warning: action sidecar not configured — set {ACTION_SIDECAR_ENV} or keep tools/puddly-action-sidecar.mjs"
+                    "warning: action sidecar not configured — run `puddly build`, set {ACTION_SIDECAR_ENV}, or keep tools/puddly-action-sidecar.mjs"
+                );
+            } else if !rpc.runner.is_oneshot() {
+                eprintln!(
+                    "{DISPLAY_NAME} serve: long-lived action sidecar (protocol v2); oneshot via PUDDLY_ACTION_SIDECAR_ONESHOT=1"
                 );
             }
             rpc.secure_cookies = secure_cookies;
@@ -506,7 +517,11 @@ async fn main() -> ExitCode {
                 };
                 if !rpc.runner.is_configured() {
                     eprintln!(
-                        "warning: action sidecar not configured — set {ACTION_SIDECAR_ENV} or keep tools/puddly-action-sidecar.mjs"
+                        "warning: action sidecar not configured — run `puddly build`, set {ACTION_SIDECAR_ENV}, or keep tools/puddly-action-sidecar.mjs"
+                    );
+                } else if !rpc.runner.is_oneshot() {
+                    eprintln!(
+                        "{DISPLAY_NAME} dev: long-lived action sidecar (protocol v2)"
                     );
                 }
                 rpc.secure_cookies = secure_cookies;
@@ -555,6 +570,19 @@ async fn main() -> ExitCode {
                 }
             }
         }
+        Commands::Build { path } => match package_action_sidecar(&path) {
+            Ok(dest) => {
+                println!(
+                    "{DISPLAY_NAME} build: wrote {} (template → {GENERATED_SIDECAR_SCRIPT})",
+                    dest.display()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(1)
+            }
+        },
     }
 }
 

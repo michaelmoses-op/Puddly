@@ -117,8 +117,8 @@ async fn ipc_protocol_stub_runner_frames_call() {
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "action");
 
-    // Protocol types round-trip
-    assert_eq!(IPC_PROTOCOL_VERSION, 1);
+    // Protocol types round-trip (v2 + id)
+    assert_eq!(IPC_PROTOCOL_VERSION, 2);
     let loaded = actions.get("todo", "archive").unwrap();
     let call = puddly_actions::ActionCall {
         resource: "todo",
@@ -130,6 +130,10 @@ async fn ipc_protocol_stub_runner_frames_call() {
     };
     let line = IpcRequest::run(&call).encode_line().unwrap();
     assert!(line.contains("\"op\":\"run\""));
-    let ok = IpcResponse::ok_data(json!({"ok": true})).encode_line().unwrap();
+    assert!(line.contains("\"v\":2"));
+    assert!(line.contains("\"id\""));
+    let ok = IpcResponse::ok_data(puddly_actions::IpcId::Num(0), json!({"ok": true}))
+        .encode_line()
+        .unwrap();
     assert!(IpcResponse::decode_line(&ok).unwrap().ok);
 }
