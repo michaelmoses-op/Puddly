@@ -2,7 +2,10 @@
 //!
 //! The manifest is a pure function of [`AppIr`]: same IR → byte-identical JSON.
 
+mod init;
 mod types;
+
+pub use init::{init_app, InitError, InitResult};
 
 use puddly_core::{CLI_NAME, DISPLAY_NAME, MANIFEST_DIR, MANIFEST_FILE};
 use puddly_ir::{

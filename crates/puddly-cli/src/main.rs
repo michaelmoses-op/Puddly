@@ -6,7 +6,7 @@ use puddly_check::{check, format_check};
 use puddly_core::{CLI_NAME, DISPLAY_NAME};
 use puddly_diagnostics::explain_text;
 use puddly_manifest::{
-    build_manifest, stale_message, stale_status, write_manifest, StaleStatus,
+    build_manifest, init_app, stale_message, stale_status, write_manifest, StaleStatus,
 };
 use puddly_db::{PgPool, PoolConfig, PostgresExecutor};
 use puddly_migrate::{
@@ -124,6 +124,12 @@ enum Commands {
     Client {
         #[command(subcommand)]
         command: ClientCmd,
+    },
+    /// Scaffold a minimal app (features + sample resource + CONVENTIONS) (ADR-039)
+    Init {
+        /// Directory to create / fill (defaults to current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -638,6 +644,42 @@ async fn main() -> ExitCode {
                         ExitCode::from(1)
                     }
                 }
+            }
+        },
+        Commands::Init { path } => match init_app(&path) {
+            Ok(init) => {
+                for p in &init.written {
+                    println!("  wrote {}", p.display());
+                }
+                let result = check(&path);
+                if !result.ok {
+                    eprintln!(
+                        "error: scaffolded app failed check:\n{}",
+                        format_check(&result, false)
+                    );
+                    return ExitCode::from(1);
+                }
+                let ir = result.ir.expect("ok implies ir");
+                match write_manifest(&path, &build_manifest(&path, &ir)) {
+                    Ok(manifest_path) => {
+                        println!("  wrote {}", manifest_path.display());
+                        println!(
+                            "{DISPLAY_NAME} init: ok — {} resource(s) at {}",
+                            ir.resources.len(),
+                            path.display()
+                        );
+                        println!("See CONVENTIONS.md in the app (and the framework repo root).");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("error: write manifest: {e}");
+                        ExitCode::from(1)
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(1)
             }
         },
     }
