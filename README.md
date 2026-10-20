@@ -7,11 +7,11 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 16** — UI mutation loop (ADR-034): `puddlyIslands.rpc` + declarative
-`data-puddly-rpc` / forms POST `/rpc/<op>` with `X-Puddly-CSRF` and session cookies;
-todo example create / toggle done / archive; create injects `owner` from session.
-Views still `export const load` (ADR-032) + list `.map` (ADR-033). Pipeline 1–13
-complete; MVP track through Step 16 (auth screens = Step 17).
+**Build plan Step 17** — auth screens (ADR-035): `GET /login` + `GET /register` HTML
+forms call `auth.login` / `auth.register` via `data-puddly-rpc` (CSRF + cookies);
+`data-puddly-redirect="/"` after success; 401 pages link to `/login`; todo view
+optional logout. Prior: Step 16 mutation loop (ADR-034), view `load` (ADR-032),
+list `.map` (ADR-033). Pipeline 1–13 complete; next = harden example (Step 18).
 
 ## Quick start
 
@@ -22,7 +22,7 @@ cargo run -p puddly-cli -- explain E0212
 cargo run -p puddly-cli -- build examples/todo-slice
 # Dev server (/__dev; views with DB load need DATABASE_URL + session cookie):
 cargo run -p puddly-cli -- dev examples/todo-slice --bind 127.0.0.1:3000
-# Then: GET /__dev → panel JSON; GET / without DB → 503 if view `load` needs list/get
+# Then: GET /login|/register → static auth forms (no DB); GET / without session → 401 + link
 # Full RPC + view load in dev (needs Postgres + Node 22+ for custom actions):
 # DATABASE_URL=postgres://... cargo run -p puddly-cli -- dev examples/todo-slice
 # Production-ish serve (always needs DATABASE_URL); GET / uses load + session cookie:

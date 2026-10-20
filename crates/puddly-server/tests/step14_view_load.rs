@@ -101,6 +101,7 @@ async fn anonymous_view_load_returns_401_html() {
     assert_eq!(resp.status, 401);
     let body = String::from_utf8_lossy(&resp.body);
     assert!(body.contains("Sign in required"), "{body}");
+    assert!(body.contains("href=\"/login\""), "401 should link to login:\n{body}");
     assert!(!body.contains("Buy milk"), "{body}");
     assert!(exec.log.is_empty(), "unauthorized before query: {:?}", exec.log);
 }

@@ -365,6 +365,13 @@ fn view_route_name(http_req: &HttpRequest, views: Option<&ViewBundle>) -> Option
     if path == "/" {
         return Some(bundle.default_view_name().unwrap_or("todo").to_string());
     }
+    // Convenience aliases (ADR-035): `/login` → login view, `/register` → register.
+    if path == "/login" && bundle.views.contains_key("login") {
+        return Some("login".to_string());
+    }
+    if path == "/register" && bundle.views.contains_key("register") {
+        return Some("register".to_string());
+    }
     if let Some(name) = path.strip_prefix("/v/") {
         if !name.is_empty() && !name.contains('/') {
             return Some(name.to_string());
@@ -381,7 +388,7 @@ pub fn dev_status_response(state: &DevState) -> HttpResponse {
 
 /// Async dispatch used by the accept loop and unit tests.
 /// Caller supplies an already-checked-out (or in-memory) [`Executor`].
-/// `views` enables SSR routes (`GET /`, `GET /v/<name>`).
+/// `views` enables SSR routes (`GET /`, `GET /v/<name>`, plus `/login`/`/register` aliases).
 pub async fn dispatch_http<S, R>(
     http_req: &HttpRequest,
     rpc: &Mutex<RpcServer<S, R>>,

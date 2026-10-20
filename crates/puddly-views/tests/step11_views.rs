@@ -27,6 +27,14 @@ fn discovers_todo_view_and_island() {
         "expected todo.view.tsx, got {views:?}"
     );
     assert!(
+        views.iter().any(|p| p.ends_with("login.view.tsx")),
+        "expected login.view.tsx, got {views:?}"
+    );
+    assert!(
+        views.iter().any(|p| p.ends_with("register.view.tsx")),
+        "expected register.view.tsx, got {views:?}"
+    );
+    assert!(
         islands.iter().any(|p| p.ends_with("todo-row.island.tsx")),
         "expected todo-row.island.tsx, got {islands:?}"
     );
