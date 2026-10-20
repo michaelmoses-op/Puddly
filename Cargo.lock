@@ -689,6 +689,9 @@ dependencies = [
  "puddly-check",
  "puddly-core",
  "puddly-diagnostics",
+ "puddly-manifest",
+ "puddly-query",
+ "serde_json",
 ]
 
 [[package]]
@@ -714,6 +717,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddly-manifest"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "puddly-check",
+ "puddly-core",
+ "puddly-ir",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "puddly-parse"
 version = "0.1.0"
 dependencies = [
@@ -724,6 +739,17 @@ dependencies = [
  "oxc_span",
  "puddly-diagnostics",
  "puddly-ir",
+]
+
+[[package]]
+name = "puddly-query"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "puddly-check",
+ "puddly-manifest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

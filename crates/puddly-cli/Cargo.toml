@@ -15,3 +15,6 @@ clap = { workspace = true }
 puddly-check = { workspace = true }
 puddly-core = { workspace = true }
 puddly-diagnostics = { workspace = true }
+puddly-manifest = { workspace = true }
+puddly-query = { workspace = true }
+serde_json = { workspace = true }

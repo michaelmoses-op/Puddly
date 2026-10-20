@@ -7,6 +7,8 @@ members = [
     "crates/puddly-parse",
     "crates/puddly-validate",
     "crates/puddly-check",
+    "crates/puddly-manifest",
+    "crates/puddly-query",
     "crates/puddly-cli",
 ]
 default-members = ["crates/puddly-cli"]
@@ -24,6 +26,8 @@ puddly-ir = { path = "crates/puddly-ir" }
 puddly-parse = { path = "crates/puddly-parse" }
 puddly-validate = { path = "crates/puddly-validate" }
 puddly-check = { path = "crates/puddly-check" }
+puddly-manifest = { path = "crates/puddly-manifest" }
+puddly-query = { path = "crates/puddly-query" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

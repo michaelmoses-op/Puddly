@@ -1,0 +1,22 @@
+---
+source: crates/puddly-query/tests/step2_query.rs
+expression: render_json(&i)
+---
+{
+  "ok": true,
+  "target": {
+    "resource": "user"
+  },
+  "edges": [
+    {
+      "kind": "referencedBy",
+      "from": "project",
+      "to": "user"
+    },
+    {
+      "kind": "referencedBy",
+      "from": "todo",
+      "to": "user"
+    }
+  ]
+}
