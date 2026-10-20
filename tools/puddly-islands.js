@@ -166,8 +166,22 @@
     return el.getAttribute("data-puddly-reload") !== "0";
   }
 
+  /** Prefer `data-puddly-redirect`; default `/` after auth.login / auth.register. */
+  function redirectTarget(el) {
+    var explicit = el.getAttribute("data-puddly-redirect");
+    if (explicit != null && explicit !== "") return explicit;
+    var op = el.getAttribute("data-puddly-rpc") || "";
+    if (op === "auth.login" || op === "auth.register") return "/";
+    return null;
+  }
+
   function afterRpc(el, result) {
     if (result && result.ok) {
+      var dest = redirectTarget(el);
+      if (dest != null && typeof location !== "undefined") {
+        location.assign(dest);
+        return result;
+      }
       if (shouldReload(el) && typeof location !== "undefined") {
         location.reload();
       }

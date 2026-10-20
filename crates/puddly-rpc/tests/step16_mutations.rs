@@ -215,6 +215,10 @@ fn islands_runtime_includes_csrf_and_credentials() {
     );
     assert!(js.contains("puddlyIslands.rpc") || js.contains("function rpc("));
     assert!(js.contains("data-puddly-rpc"));
+    assert!(
+        js.contains("data-puddly-redirect") || js.contains("redirectTarget"),
+        "Step 17: auth forms redirect after success"
+    );
 }
 
 #[tokio::test]

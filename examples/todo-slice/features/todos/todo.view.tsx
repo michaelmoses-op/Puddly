@@ -13,6 +13,15 @@ export default function TodoView(props) {
       <body>
         <main class="todo-app">
           <h1>{props.heading}</h1>
+          <p class="todo-session">
+            <button
+              type="button"
+              data-puddly-rpc="auth.logout"
+              data-puddly-redirect="/login"
+            >
+              Sign out
+            </button>
+          </p>
           <form data-puddly-rpc="todo.create" class="todo-create">
             <input name="title" type="text" placeholder="New todo" />
             <input

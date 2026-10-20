@@ -199,9 +199,9 @@ fn from_hex(b: u8) -> Option<u8> {
     }
 }
 
-/// Simple HTML body for 401 (no login form until Step 17).
+/// Simple HTML body for 401 with a link to the login view (ADR-035).
 pub fn unauthorized_html() -> String {
-    "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>Sign in required</title></head><body><h1>Sign in required</h1><p>This page needs an authenticated session. Login UI arrives in a later step.</p></body></html>".into()
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>Sign in required</title></head><body><h1>Sign in required</h1><p>This page needs an authenticated session.</p><p><a href=\"/login\">Sign in</a></p></body></html>".into()
 }
 
 /// Simple HTML body for 503 when load needs DB but none is configured.
