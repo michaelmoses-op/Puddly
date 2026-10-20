@@ -1,0 +1,6 @@
+---
+source: crates/puddly-data/tests/step4_data.rs
+expression: "format!(\"{}\\n{:?}\", page.sql, page.params)"
+---
+SELECT "id", "title", "done", "dueDate", "project", "owner", "createdAt" FROM "todo" WHERE "done" = $1 ORDER BY "createdAt" DESC LIMIT $2
+[Bool(false), Int(10)]

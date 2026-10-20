@@ -7,6 +7,7 @@ description = "SQL migration generation and drift check for Puddly"
 
 [dependencies]
 puddly-core = { workspace = true }
+puddly-db = { workspace = true }
 puddly-ir = { workspace = true }
 puddly-schema = { workspace = true }
 serde = { workspace = true }
@@ -14,4 +15,5 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 puddly-check = { workspace = true }
+puddly-db = { workspace = true }
 insta = { workspace = true }

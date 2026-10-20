@@ -14,6 +14,7 @@ path = "src/main.rs"
 clap = { workspace = true }
 puddly-check = { workspace = true }
 puddly-core = { workspace = true }
+puddly-db = { workspace = true }
 puddly-diagnostics = { workspace = true }
 puddly-manifest = { workspace = true }
 puddly-migrate = { workspace = true }

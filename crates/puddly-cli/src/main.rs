@@ -7,8 +7,9 @@ use puddly_diagnostics::explain_text;
 use puddly_manifest::{
     build_manifest, stale_message, stale_status, write_manifest, StaleStatus,
 };
+use puddly_db::PostgresExecutor;
 use puddly_migrate::{
-    drift_message, drift_status, generate_migration, DriftStatus,
+    apply_migrations, drift_message, drift_status, generate_migration, DriftStatus,
 };
 use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
@@ -103,6 +104,14 @@ enum MigrateCmd {
         path: PathBuf,
         #[arg(long)]
         json: bool,
+    },
+    /// Apply pending SQL migrations (requires DATABASE_URL)
+    Apply {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Postgres URL (defaults to $DATABASE_URL)
+        #[arg(long)]
+        database_url: Option<String>,
     },
 }
 
@@ -267,6 +276,49 @@ fn main() -> ExitCode {
                     println!("{}", drift_message(&status));
                 }
                 exit_bool(matches!(status, DriftStatus::Fresh))
+            }
+            MigrateCmd::Apply { path, database_url } => {
+                let url = database_url
+                    .or_else(|| std::env::var("DATABASE_URL").ok())
+                    .filter(|s| !s.is_empty());
+                let Some(url) = url else {
+                    eprintln!(
+                        "error: migrate apply requires --database-url or $DATABASE_URL"
+                    );
+                    return ExitCode::from(1);
+                };
+                // Refuse silent apply when migrations are drifted (fingerprint check).
+                let result = check(&path);
+                if !result.ok {
+                    print_out(&format_check(&result, false));
+                    return ExitCode::from(1);
+                }
+                let ir = result.ir.expect("ok implies ir");
+                let status = drift_status(&path, &ir);
+                if !matches!(status, DriftStatus::Fresh) {
+                    eprintln!("{}", drift_message(&status));
+                    eprintln!("error: refuse to apply while migrations are missing or drifted");
+                    return ExitCode::from(1);
+                }
+                match PostgresExecutor::connect(&url) {
+                    Ok(mut exec) => match apply_migrations(&path, &mut exec) {
+                        Ok(r) => {
+                            println!("{DISPLAY_NAME} migrate apply: {}", r.message);
+                            for name in &r.applied {
+                                println!("  applied {name}");
+                            }
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            ExitCode::from(1)
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        ExitCode::from(1)
+                    }
+                }
             }
         },
     }
