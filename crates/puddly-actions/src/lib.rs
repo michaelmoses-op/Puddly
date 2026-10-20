@@ -5,9 +5,13 @@
 //! is a stub until a JS runtime or codegen lands.
 
 mod error;
+mod ipc;
 mod load;
 
 pub use error::{ActionError, ActionResult};
+pub use ipc::{
+    IpcActionRunner, IpcErrorBody, IpcRequest, IpcResponse, IpcUser, IPC_PROTOCOL_VERSION,
+};
 pub use load::{load_actions, ActionCatalog, LoadedAction};
 
 use puddly_ir::AppIr;
