@@ -237,7 +237,11 @@ fn map_err(e: RpcError) -> RpcResponse {
         RpcError::NotFound(_) => "not_found",
         RpcError::BadRequest(_) => "bad_request",
         RpcError::Auth(_) => "auth",
-        RpcError::Action(_) => "action",
+        // Prefer frozen IPC wire code when present (ADR-049); else generic `action`.
+        RpcError::Action(a) => match a.ipc_code() {
+            Some(c) => c.as_str(),
+            None => "action",
+        },
         RpcError::Db(_) => "db",
         _ => "error",
     };

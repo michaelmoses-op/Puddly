@@ -178,8 +178,23 @@ async function handleHostRequest(req) {
       data: data === undefined ? {} : data,
     });
   } catch (e) {
-    fail(id, IPC_ERROR_CODES.run_failed, e?.message ?? String(e));
+    // Nested ctx.db rejects as `code: message` — re-emit known wire codes
+    // so the host can map them to HTTP (ADR-049) instead of always run_failed.
+    fail(id, ...failFromThrown(e));
   }
+}
+
+/**
+ * @param {unknown} e
+ * @returns {[string, string]}
+ */
+function failFromThrown(e) {
+  const message = e?.message ?? String(e);
+  const m = /^([a-z_]+):\s([\s\S]*)$/.exec(message);
+  if (m && Object.prototype.hasOwnProperty.call(IPC_ERROR_CODES, m[1])) {
+    return [m[1], m[2]];
+  }
+  return [IPC_ERROR_CODES.run_failed, message];
 }
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });

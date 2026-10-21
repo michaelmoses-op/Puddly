@@ -7,8 +7,8 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 29** — join-table `rule.member` (ADR-047). Prior: Step 28 action
-`ctx.db` (ADR-046); Step 27 opt-in REST + OpenAPI (ADR-045).
+**Build plan Step 31** — IPC / action errors → HTTP status (ADR-049). Prior: Step 30
+CSRF double-submit (ADR-048); Step 29 `rule.member` (ADR-047).
 
 ## Install the CLI
 

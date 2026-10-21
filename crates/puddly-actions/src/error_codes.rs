@@ -1,4 +1,5 @@
 //! Frozen IPC sidecar error codes (Step 13 / ADR-031; extended ADR-046).
+//! HTTP status mapping: ADR-049 / Step 31.
 //!
 //! Wire values are snake_case strings. The Node sidecar must emit the same
 //! literals; do not invent ad-hoc codes without bumping the protocol ADR.
@@ -58,6 +59,25 @@ impl IpcErrorCode {
         Self::Forbidden,
         Self::DbFailed,
     ];
+
+    /// HTTP status for RPC / REST when this wire code surfaces (ADR-049).
+    ///
+    /// Unknown / unmapped failures stay **500**. There is no timeout code today
+    /// (no 504); do not invent codes here — extend the enum + ADR instead.
+    pub const fn http_status(self) -> u16 {
+        match self {
+            Self::BadRequest | Self::UnknownOp => 400,
+            Self::Unauthorized => 401,
+            Self::Forbidden => 403,
+            Self::NotFound => 404,
+            Self::ProtocolMismatch
+            | Self::ImportFailed
+            | Self::NoRunExport
+            | Self::RunFailed
+            | Self::SidecarNotConfigured
+            | Self::DbFailed => 500,
+        }
+    }
 }
 
 impl fmt::Display for IpcErrorCode {

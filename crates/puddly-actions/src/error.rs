@@ -15,7 +15,8 @@ pub enum ActionError {
         action: String,
         path: String,
     },
-    /// Nested `ctx.db` failure with a wire error code (ADR-046).
+    /// Wire failure with a frozen [`IpcErrorCode`] — nested `ctx.db` (ADR-046)
+    /// or sidecar run response (ADR-049).
     #[error("{code}: {message}")]
     Db {
         code: IpcErrorCode,
@@ -32,6 +33,14 @@ impl ActionError {
         Self::Db {
             code,
             message: message.into(),
+        }
+    }
+
+    /// Frozen wire code when present (sidecar / `ctx.db`); else `None`.
+    pub fn ipc_code(&self) -> Option<IpcErrorCode> {
+        match self {
+            Self::Db { code, .. } => Some(*code),
+            _ => None,
         }
     }
 }

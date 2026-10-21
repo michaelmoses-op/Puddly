@@ -5,6 +5,7 @@
 //! the JSONL protocol. Step 10 makes [`ActionRunner`] async (ADR-028).
 //! Step 13: protocol v2 (`id`), long-lived worker, packaging B, frozen error codes
 //! (ADR-031). Step 28: nested `ctx.db` via [`ActionDbHost`] (ADR-046).
+//! Step 31: [`IpcErrorCode::http_status`] for RPC/REST (ADR-049).
 
 mod db_host;
 mod error;
