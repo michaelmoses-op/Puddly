@@ -19,7 +19,8 @@ use puddly_query::{
 };
 use puddly_actions::{package_action_sidecar, ACTION_SIDECAR_ENV, GENERATED_SIDECAR_SCRIPT};
 use puddly_rpc::{
-    write_rs_rows, write_ts_client, RpcServer, GENERATED_CLIENT_TS, GENERATED_ROWS_RS,
+    write_openapi, write_rs_rows, write_ts_client, RpcServer, GENERATED_CLIENT_TS,
+    GENERATED_OPENAPI_JSON, GENERATED_ROWS_RS,
 };
 use puddly_server::{
     errors_from_check, resolve_serve_env, serve, serve_dev, watch_dev_loop, DeployEnv,
@@ -102,6 +103,9 @@ enum Commands {
         /// Set Secure on session cookies
         #[arg(long)]
         secure_cookies: bool,
+        /// Opt-in REST `/api/*` + `GET /openapi.json` beside RPC (ADR-045)
+        #[arg(long)]
+        rest: bool,
     },
     /// Incremental compile + hot reload + `/__dev` panel (ADR-018 / ADR-030)
     Dev {
@@ -446,7 +450,12 @@ async fn main() -> ExitCode {
             bind,
             database_url,
             secure_cookies,
+            rest,
         } => {
+            let rest = rest
+                || std::env::var("PUDDLY_REST")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
             let env = match resolve_serve_env(database_url, secure_cookies) {
                 Ok(e) => e,
                 Err(msg) => {
@@ -506,11 +515,13 @@ async fn main() -> ExitCode {
                 secure_cookies: env.secure_cookies,
                 database_url: Some(env.database_url.clone()),
                 live_fanout: true,
+                rest,
                 ..ServerConfig::default()
             };
             eprintln!(
-                "{DISPLAY_NAME} serve: env={} (migrate apply is explicit; /health /ready /metrics /events; LISTEN puddly_live)",
-                env.deploy
+                "{DISPLAY_NAME} serve: env={} (migrate apply is explicit; /health /ready /metrics /events; LISTEN puddly_live{})",
+                env.deploy,
+                if rest { "; REST /api + /openapi.json" } else { "" }
             );
             match serve(&config, Arc::new(Mutex::new(rpc)), pool, views).await {
                 Ok(()) => ExitCode::SUCCESS,
@@ -645,16 +656,25 @@ async fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             }
-            match write_rs_rows(&path, &ir) {
+            if let Err(e) = write_rs_rows(&path, &ir) {
+                eprintln!("error: write rows: {e}");
+                return ExitCode::from(1);
+            } else {
+                println!(
+                    "{DISPLAY_NAME} build: wrote {} ({GENERATED_ROWS_RS})",
+                    path.join(GENERATED_ROWS_RS).display()
+                );
+            }
+            match write_openapi(&path, &ir) {
                 Ok(dest) => {
                     println!(
-                        "{DISPLAY_NAME} build: wrote {} ({GENERATED_ROWS_RS})",
+                        "{DISPLAY_NAME} build: wrote {} ({GENERATED_OPENAPI_JSON})",
                         dest.display()
                     );
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: write rows: {e}");
+                    eprintln!("error: write openapi: {e}");
                     ExitCode::from(1)
                 }
             }
