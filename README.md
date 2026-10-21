@@ -10,31 +10,38 @@ Display name and CLI binary are defined in one place:
 **Build plan Step 27** — opt-in REST `/api/*` + OpenAPI (ADR-045); `puddly serve --rest`.
 Prior: Step 26 IR row decode in CRUD (ADR-044).
 
-## Try the todo slice
+## Install the CLI
 
-Human click-path (Postgres + Node 22+): see **[`examples/todo-slice/README.md`](examples/todo-slice/README.md)** —
-migrate apply → `puddly build` → `puddly serve` → open `/register`.
-
-## Quick start
+One-time (needs [Rust/Cargo](https://rustup.rs)):
 
 ```bash
-# New app (add --docker for Dockerfile + compose; migrate apply stays explicit):
-cargo run -p puddly-cli -- init ./my-app
-cargo run -p puddly-cli -- init ./my-app-docker --docker
-cargo run -p puddly-cli -- check examples/todo-slice
-cargo run -p puddly-cli -- explain E0212
-# Package sidecar + typed client into gitignored .puddly/generated/:
-cargo run -p puddly-cli -- build examples/todo-slice
-cargo run -p puddly-cli -- client generate examples/todo-slice
-# Dev server (/__dev; views with DB load need DATABASE_URL + session cookie):
-cargo run -p puddly-cli -- dev examples/todo-slice --bind 127.0.0.1:3000
-# Then: GET /login|/register → static auth forms (no DB); GET / without session → 401 + link
-# Full RPC + view load in dev (needs Postgres + Node 22+ for custom actions):
-# DATABASE_URL=postgres://... cargo run -p puddly-cli -- dev examples/todo-slice
-# Production-ish serve (always needs DATABASE_URL); GET / uses load + session cookie:
-# DATABASE_URL=postgres://... cargo run -p puddly-cli -- serve examples/todo-slice --bind 127.0.0.1:3000
-cargo test --workspace
+# from a clone
+./install.sh
+# or: cargo install --path crates/puddly-cli --locked --force
+
+# or without cloning first
+curl -fsSL https://raw.githubusercontent.com/michaelmoses-op/Puddly/main/install.sh | bash
 ```
+
+That puts `puddly` on PATH (usually `~/.cargo/bin`). App authors use short `puddly …` commands after that — no daily `cargo run`.
+
+## Quick start (app authors)
+
+```bash
+cd my-app   # or examples/todo-slice
+puddly install   # Node 22+ doctor + build (sidecar, client, rows)
+# or: puddly build
+export DATABASE_URL=postgres://USER:PASS@127.0.0.1:5432/DB
+puddly migrate   # apply (also: migrate generate|check|apply)
+puddly dev       # or: puddly serve
+# demo one-shot: puddly up
+```
+
+When your cwd is an app (`features/`, `.puddly/`, or `puddly.toml`), app-path args are optional — `puddly` walks up from cwd to find the app root.
+
+New app: `puddly init ./my-app` (add `--docker` for Dockerfile + compose; migrate apply stays explicit).
+
+Human click-path for the sample: **[`examples/todo-slice/README.md`](examples/todo-slice/README.md)**.
 
 ### Action sidecar
 
@@ -43,7 +50,7 @@ Custom actions run in a **long-lived** Node process speaking JSONL v2 on stdin/s
 
 | How | Detail |
 | --- | --- |
-| Package | `puddly build` → `.puddly/generated/action-sidecar.mjs` + `client.ts` |
+| Package | `puddly build` / `puddly install` → `.puddly/generated/action-sidecar.mjs` + `client.ts` + rows |
 | Typed client | `puddly client generate` → `api.<resource>.<op>()` (ADR-038) |
 | Default discovery | env → generated (walk-up) → `tools/puddly-action-sidecar.mjs` (walk-up) |
 | Convenience | `IpcActionRunner::node_sidecar` / `::generated_sidecar` |
@@ -52,6 +59,19 @@ Custom actions run in a **long-lived** Node process speaking JSONL v2 on stdin/s
 | CLI | `puddly serve` / `puddly dev` (with DB) use long-lived worker when configured |
 
 Requires Node 22+ (`--experimental-strip-types` for `*.action.ts` imports).
+
+## Developing Puddly itself
+
+Framework contributors work in this Cargo workspace. Prefer the installed `puddly` binary for app commands; use Cargo when iterating on the CLI/crates:
+
+```bash
+cargo run -p puddly-cli -- check examples/todo-slice
+cargo run -p puddly-cli -- explain E0212
+cargo run -p puddly-cli -- init ./my-app
+cargo test --workspace
+```
+
+Re-install after CLI changes: `./install.sh` or `cargo install --path crates/puddly-cli --locked --force`.
 
 ## Workspace
 
@@ -78,6 +98,7 @@ crates/
 examples/todo-slice/   # sample app + manifest + migrations + todo view/island
 tools/                 # action sidecar + puddly-islands.js (hydrate + RPC mutations)
 tests/fixtures/        # invalid fixtures per error code
+install.sh             # cargo-install the puddly CLI onto PATH
 ```
 
 CI sketch: [`.github/workflows/puddly-check.yml`](.github/workflows/puddly-check.yml).
