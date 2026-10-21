@@ -53,10 +53,16 @@ async fn rpc_archive_via_sidecar_receives_user() {
         secure_cookies: false,
     };
     let mut exec = RecordingExecutor::new();
-    let mut row = DbRow::new();
-    row.insert("id", SqlValue::Uuid("arch-1".into()));
-    row.insert("owner", SqlValue::Uuid("owner-me".into()));
-    exec.push_canned(vec![row]);
+    // owner access check + ctx.db.get (ADR-046)
+    for _ in 0..2 {
+        let mut row = DbRow::new();
+        row.insert("id", SqlValue::Uuid("arch-1".into()));
+        row.insert("title", SqlValue::Text("Archived".into()));
+        row.insert("done", SqlValue::Bool(false));
+        row.insert("project", SqlValue::Uuid("proj-1".into()));
+        row.insert("owner", SqlValue::Uuid("owner-me".into()));
+        exec.push_canned(vec![row]);
+    }
 
     let req = RpcRequest::new("todo.archive", json!({"id": "arch-1"}))
         .with_header(CSRF_HEADER_NAME, "1")
@@ -66,4 +72,5 @@ async fn rpc_archive_via_sidecar_receives_user() {
     let data = resp.data.unwrap();
     assert_eq!(data["archived"], "arch-1");
     assert_eq!(data["userId"], "owner-me");
+    assert_eq!(data["title"], "Archived");
 }

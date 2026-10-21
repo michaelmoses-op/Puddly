@@ -127,6 +127,7 @@ async fn ipc_protocol_stub_runner_frames_call() {
         source_path: &loaded.path,
         source: &loaded.source,
         user: None,
+        db_host: None,
     };
     let line = IpcRequest::run(&call).encode_line().unwrap();
     assert!(line.contains("\"op\":\"run\""));

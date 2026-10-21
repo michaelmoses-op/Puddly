@@ -1,3 +1,4 @@
+use crate::error_codes::IpcErrorCode;
 use thiserror::Error;
 
 pub type ActionResult<T> = Result<T, ActionError>;
@@ -14,10 +15,23 @@ pub enum ActionError {
         action: String,
         path: String,
     },
+    /// Nested `ctx.db` failure with a wire error code (ADR-046).
+    #[error("{code}: {message}")]
+    Db {
+        code: IpcErrorCode,
+        message: String,
+    },
 }
 
 impl ActionError {
     pub fn msg(s: impl Into<String>) -> Self {
         Self::Message(s.into())
+    }
+
+    pub fn db(code: IpcErrorCode, message: impl Into<String>) -> Self {
+        Self::Db {
+            code,
+            message: message.into(),
+        }
     }
 }

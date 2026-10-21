@@ -38,6 +38,7 @@ Short rules for apps (and for AI). Details live in gitignored `docs/` ADRs.
 ## Actions & RPC
 
 - Custom actions: `actions: { name: { input, run: "./file.action.ts", access? } }`.
+- Action `ctx`: `{ user, db }` — `ctx.db.get|list|create|update|delete(resource, input)` goes through host CRUD + access rules (no raw SQL).
 - RPC: `POST /rpc/<resource>.<op>` JSON body. Mutations need `X-Puddly-CSRF` + session cookie.
 - Islands: `data-puddly-rpc` / forms, or generated `api.<resource>.<op>()` client.
 

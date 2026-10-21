@@ -1,6 +1,7 @@
 //! Top-level RPC dispatch: CSRF → auth context → CRUD / auth / custom actions.
 
 use crate::access_gate::{enforce, list_owner_field, row_values_from_db};
+use crate::action_db::CrudActionDbHost;
 use crate::auth_ops::handle_auth_op;
 use crate::context::RpcContext;
 use crate::crud::handle_crud;
@@ -99,17 +100,26 @@ impl<'a, S: SessionStore, R: ActionRunner> RpcRuntime<'a, S, R> {
                         target.resource, target.operation
                     ))
                 })?;
-            let data = self
-                .runner
-                .run(ActionCall {
-                    resource: &target.resource,
-                    action: &target.operation,
-                    input: &req.body,
-                    source_path: &loaded.path,
-                    source: &loaded.source,
-                    user: ctx.user.as_ref().map(auth_user_to_ipc),
-                })
-                .await?;
+            // Nested ctx.db helpers reuse CRUD + the same session user (ADR-046).
+            let data = {
+                let mut db_host = CrudActionDbHost {
+                    ir: self.ir,
+                    book: self.book,
+                    ctx: &ctx,
+                    exec,
+                };
+                self.runner
+                    .run(ActionCall {
+                        resource: &target.resource,
+                        action: &target.operation,
+                        input: &req.body,
+                        source_path: &loaded.path,
+                        source: &loaded.source,
+                        user: ctx.user.as_ref().map(auth_user_to_ipc),
+                        db_host: Some(&mut db_host),
+                    })
+                    .await?
+            };
             // Archive actions historically returned metadata only; persist by deleting
             // the owner-checked row so the list view updates (ADR-036).
             if target.operation == "archive" {

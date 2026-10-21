@@ -2,7 +2,8 @@
 //! Updated for protocol v2 (`id`) in Step 13.
 
 use puddly_actions::{
-    ActionCall, ActionRunner, IpcActionRunner, IpcRequest, IpcUser, ACTION_SIDECAR_ENV,
+    ActionCall, ActionRunner, IpcActionRunner, IpcRequest, IpcUser, MockActionDbHost,
+    ACTION_SIDECAR_ENV,
 };
 use serde_json::json;
 use std::io::Write;
@@ -55,6 +56,17 @@ async fn node_sidecar_runs_archive_action() {
         email: "owner@example.com".into(),
         roles: vec!["editor".into()],
     };
+    let mut db = MockActionDbHost::new(|method, resource, input| {
+        assert_eq!(method, "get");
+        assert_eq!(resource, "todo");
+        Ok(json!({
+            "id": input["id"].clone(),
+            "title": "Buy milk",
+            "done": false,
+            "project": "p1",
+            "owner": "user-7",
+        }))
+    });
     let call = ActionCall {
         resource: "todo",
         action: "archive",
@@ -62,10 +74,12 @@ async fn node_sidecar_runs_archive_action() {
         source_path: &path,
         source: &source,
         user: Some(user),
+        db_host: Some(&mut db),
     };
     let data = runner.run(call).await.expect("sidecar execute");
     assert_eq!(data["archived"], "todo-42");
     assert_eq!(data["userId"], "user-7");
+    assert_eq!(data["title"], "Buy milk");
 }
 
 #[test]
@@ -84,6 +98,7 @@ fn ipc_request_includes_user_on_the_wire() {
             email: "e@e.co".into(),
             roles: vec![],
         }),
+        db_host: None,
     };
     let line = IpcRequest::run(&call).encode_line().unwrap();
     assert!(line.contains("\"user\""));
@@ -97,6 +112,7 @@ fn direct_node_jsonl_handshake() {
         eprintln!("skip: node not on PATH");
         return;
     }
+    use std::io::{BufRead, BufReader};
     let root = workspace_root();
     let script = root.join("tools/puddly-action-sidecar.mjs");
     let path = archive_path();
@@ -117,23 +133,41 @@ fn direct_node_jsonl_handshake() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    {
-        let mut stdin = child.stdin.take().unwrap();
-        writeln!(stdin, "{}", req).unwrap();
-    }
-    let out = child.wait_with_output().unwrap();
-    assert!(
-        out.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let line = String::from_utf8_lossy(&out.stdout);
-    let resp: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{}", req).unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let resp = loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let msg: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        if msg.get("op").and_then(|o| o.as_str()) == Some("db") {
+            let reply = json!({
+                "v": 2,
+                "id": msg["id"].clone(),
+                "ok": true,
+                "data": {
+                    "id": "direct-1",
+                    "title": "Direct",
+                    "done": false,
+                    "project": "p1",
+                    "owner": "u9",
+                }
+            });
+            writeln!(stdin, "{}", reply).unwrap();
+            continue;
+        }
+        break msg;
+    };
+    drop(stdin);
+    let status = child.wait().unwrap();
+    assert!(status.success(), "sidecar exit {status}");
     assert_eq!(resp["ok"], true);
     assert_eq!(resp["v"], 2);
     assert_eq!(resp["id"], "direct-1");
     assert_eq!(resp["data"]["archived"], "direct-1");
     assert_eq!(resp["data"]["userId"], "u9");
+    assert_eq!(resp["data"]["title"], "Direct");
 }
 
 #[test]

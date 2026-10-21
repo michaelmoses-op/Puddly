@@ -1,4 +1,4 @@
-//! Frozen IPC sidecar error codes (Step 13 / ADR-031).
+//! Frozen IPC sidecar error codes (Step 13 / ADR-031; extended ADR-046).
 //!
 //! Wire values are snake_case strings. The Node sidecar must emit the same
 //! literals; do not invent ad-hoc codes without bumping the protocol ADR.
@@ -19,6 +19,12 @@ pub enum IpcErrorCode {
     NoRunExport,
     RunFailed,
     SidecarNotConfigured,
+    /// Nested `ctx.db` auth failure (ADR-046).
+    Unauthorized,
+    /// Nested `ctx.db` access denial (ADR-046).
+    Forbidden,
+    /// Nested `ctx.db` failure not covered above (ADR-046).
+    DbFailed,
 }
 
 impl IpcErrorCode {
@@ -32,6 +38,9 @@ impl IpcErrorCode {
             Self::NoRunExport => "no_run_export",
             Self::RunFailed => "run_failed",
             Self::SidecarNotConfigured => "sidecar_not_configured",
+            Self::Unauthorized => "unauthorized",
+            Self::Forbidden => "forbidden",
+            Self::DbFailed => "db_failed",
         }
     }
 
@@ -45,6 +54,9 @@ impl IpcErrorCode {
         Self::NoRunExport,
         Self::RunFailed,
         Self::SidecarNotConfigured,
+        Self::Unauthorized,
+        Self::Forbidden,
+        Self::DbFailed,
     ];
 }
 
@@ -67,6 +79,9 @@ impl FromStr for IpcErrorCode {
             "no_run_export" => Ok(Self::NoRunExport),
             "run_failed" => Ok(Self::RunFailed),
             "sidecar_not_configured" => Ok(Self::SidecarNotConfigured),
+            "unauthorized" => Ok(Self::Unauthorized),
+            "forbidden" => Ok(Self::Forbidden),
+            "db_failed" => Ok(Self::DbFailed),
             other => Err(format!("unknown ipc error code `{other}`")),
         }
     }

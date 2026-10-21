@@ -56,7 +56,7 @@ CSRF (`X-Puddly-CSRF`) and session cookies are sent automatically by `tools/pudd
 | `features/auth/*.view.tsx` | Login / register (static `load`) |
 | `features/todos/todo.view.tsx` | Session-gated list + create form |
 | `features/todos/todo-row.island.tsx` | Toggle + Archive |
-| `features/todos/archive.action.ts` | Sidecar action; RPC then `DELETE`s the row |
+| `features/todos/archive.action.ts` | Sidecar action uses `ctx.db.get`; RPC then `DELETE`s the row |
 | `migrations/0001_init.sql` | `user` / `project` / `todo` tables |
 
 ## Developing Puddly itself

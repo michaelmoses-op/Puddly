@@ -7,8 +7,10 @@
 //! - Custom actions via loaded catalog + pluggable [`ActionRunner`]
 //! - Async dispatch (ADR-028)
 //! - Opt-in REST + OpenAPI (ADR-045 / Step 27)
+//! - Action `ctx.db` nested CRUD host (ADR-046 / Step 28)
 
 mod access_gate;
+mod action_db;
 mod auth_ops;
 mod context;
 mod crud;
@@ -24,6 +26,7 @@ mod rs_rows;
 mod ts_client;
 
 pub use access_gate::{access_op_name, enforce, find_rule, require_rule, row_values_from_db};
+pub use action_db::CrudActionDbHost;
 pub use context::RpcContext;
 pub use csrf::check_csrf;
 pub use dispatch::RpcRuntime;
