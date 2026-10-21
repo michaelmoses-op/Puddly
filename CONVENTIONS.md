@@ -58,3 +58,5 @@ Short rules for apps (and for AI). Details live in gitignored `docs/` ADRs.
 - `puddly build` — package sidecar + typed client into `.puddly/generated/`.
 - `puddly client generate` — client only.
 - `puddly init [path]` — scaffold a minimal app (this file + sample resource).
+- `puddly init --docker` — also write Dockerfile + compose (migrate apply is a one-shot, never on serve start).
+- Production serve: `GET /health` (liveness), `GET /ready` (pool), `GET /metrics` (JSON counters); SIGTERM drains SSE.

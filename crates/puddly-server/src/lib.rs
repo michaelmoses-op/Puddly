@@ -6,10 +6,13 @@
 //!
 //! Step 12 adds [`serve_dev`] / [`DevState`] for `puddly dev` (ADR-030).
 //! Step 22 adds SSE / `live: true` via [`SseHub`] + `GET /events` (ADR-040).
+//! Step 23 adds graceful SSE drain, `/ready`, env validation, `/metrics` (ADR-041).
 
 mod dev;
+mod env;
 mod error;
 mod http;
+mod metrics;
 mod serve;
 mod sse;
 mod view_load;
@@ -20,15 +23,19 @@ pub use dev::{
     inject_dev_overlay_script, reload_actions, reload_resources, ChangeKind, DevError,
     DevHandles, DevState, DevStatus, ReloadOutcome, DEV_DEBOUNCE_MS, DEV_OVERLAY_JS,
 };
+pub use env::{resolve_serve_env, validate_database_url, DeployEnv, ServeEnv};
 pub use error::{ServerError, ServerResult};
 pub use http::{
     parse_http_request, parse_http_request_bytes, write_http_response, write_sse_headers,
     HttpRequest, HttpResponse,
 };
+pub use metrics::Metrics;
 pub use serve::{
-    dev_status_response, dispatch_http, dispatch_http_dev, serve, serve_dev, serve_once,
-    serve_once_with_hub, serve_with_hub, stream_sse, try_dispatch_get, try_dispatch_get_dev,
-    ServerConfig,
+    dev_status_response, dispatch_http, dispatch_http_dev, readiness_from_pool, serve,
+    serve_dev, serve_once, serve_once_with_hub, serve_with_hub, serve_with_hub_metrics,
+    stream_sse, try_dispatch_get, try_dispatch_get_dev, ServerConfig, DEFAULT_DRAIN_TIMEOUT,
 };
-pub use sse::{event_from_rpc, SseEvent, SseHub, SSE_KEEPALIVE};
+pub use sse::{
+    event_from_rpc, SseConnectionGuard, SseEvent, SseHub, SSE_KEEPALIVE, SSE_SHUTDOWN_FRAME,
+};
 pub use watch::watch_dev_loop;

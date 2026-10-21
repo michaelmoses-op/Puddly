@@ -5,7 +5,7 @@
 mod init;
 mod types;
 
-pub use init::{init_app, InitError, InitResult};
+pub use init::{init_app, init_app_with_options, InitError, InitOptions, InitResult};
 
 use puddly_core::{CLI_NAME, DISPLAY_NAME, MANIFEST_DIR, MANIFEST_FILE};
 use puddly_ir::{

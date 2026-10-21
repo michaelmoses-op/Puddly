@@ -7,9 +7,9 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 22** — SSE / `live: true` realtime (ADR-040). `GET /events` +
-in-process hub; islands `subscribeLive` / EventSource. Prior: Step 21 `puddly init` +
-[`CONVENTIONS.md`](CONVENTIONS.md) (ADR-039). Next post-MVP: prod hardening, row codegen.
+**Build plan Step 23** — production hardening (ADR-041): graceful SSE drain, `/health` +
+`/ready` + `/metrics`, startup env validation, `puddly init --docker`. Prior: Step 22 SSE /
+`live: true` (ADR-040). Next post-MVP: generated row/client structs.
 
 ## Try the todo slice
 
@@ -19,8 +19,9 @@ migrate apply → `puddly build` → `puddly serve` → open `/register`.
 ## Quick start
 
 ```bash
-# New app:
+# New app (add --docker for Dockerfile + compose; migrate apply stays explicit):
 cargo run -p puddly-cli -- init ./my-app
+cargo run -p puddly-cli -- init ./my-app-docker --docker
 cargo run -p puddly-cli -- check examples/todo-slice
 cargo run -p puddly-cli -- explain E0212
 # Package sidecar + typed client into gitignored .puddly/generated/:

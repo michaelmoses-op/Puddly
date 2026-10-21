@@ -6,7 +6,8 @@ use puddly_check::{check, format_check};
 use puddly_core::{CLI_NAME, DISPLAY_NAME};
 use puddly_diagnostics::explain_text;
 use puddly_manifest::{
-    build_manifest, init_app, stale_message, stale_status, write_manifest, StaleStatus,
+    build_manifest, init_app_with_options, stale_message, stale_status, write_manifest,
+    InitOptions, StaleStatus,
 };
 use puddly_db::{PgPool, PoolConfig, PostgresExecutor};
 use puddly_migrate::{
@@ -19,7 +20,8 @@ use puddly_query::{
 use puddly_actions::{package_action_sidecar, ACTION_SIDECAR_ENV, GENERATED_SIDECAR_SCRIPT};
 use puddly_rpc::{write_ts_client, RpcServer, GENERATED_CLIENT_TS};
 use puddly_server::{
-    errors_from_check, serve, serve_dev, watch_dev_loop, DevHandles, DevState, ServerConfig,
+    errors_from_check, resolve_serve_env, serve, serve_dev, watch_dev_loop, DeployEnv,
+    DevHandles, DevState, ServerConfig,
 };
 use puddly_views::ViewBundle;
 use std::path::PathBuf;
@@ -130,6 +132,9 @@ enum Commands {
         /// Directory to create / fill (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Also write Dockerfile + docker-compose.yml (explicit migrate apply) (ADR-041)
+        #[arg(long)]
+        docker: bool,
     },
 }
 
@@ -440,13 +445,18 @@ async fn main() -> ExitCode {
             database_url,
             secure_cookies,
         } => {
-            let url = database_url
-                .or_else(|| std::env::var("DATABASE_URL").ok())
-                .filter(|s| !s.is_empty());
-            let Some(url) = url else {
-                eprintln!("error: serve requires --database-url or $DATABASE_URL");
-                return ExitCode::from(1);
+            let env = match resolve_serve_env(database_url, secure_cookies) {
+                Ok(e) => e,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(1);
+                }
             };
+            if env.deploy == DeployEnv::Production && !secure_cookies {
+                eprintln!(
+                    "{DISPLAY_NAME} serve: PUDDLY_ENV=production — forcing Secure session cookies"
+                );
+            }
             let result = check(&path);
             if !result.ok {
                 print_out(&format_check(&result, false));
@@ -456,6 +466,7 @@ async fn main() -> ExitCode {
             // Prefer generated `.puddly/generated/action-sidecar.mjs`, then
             // `tools/puddly-action-sidecar.mjs`, or `$PUDDLY_ACTION_SIDECAR`.
             // Long-lived worker by default (oneshot via PUDDLY_ACTION_SIDECAR_ONESHOT=1).
+            // Migrations are never applied here — run `puddly migrate apply` first.
             let mut rpc = match RpcServer::from_app_with_sidecar(&path, ir) {
                 Ok(s) => s,
                 Err(e) => {
@@ -472,8 +483,8 @@ async fn main() -> ExitCode {
                     "{DISPLAY_NAME} serve: long-lived action sidecar (protocol v2); oneshot via PUDDLY_ACTION_SIDECAR_ONESHOT=1"
                 );
             }
-            rpc.secure_cookies = secure_cookies;
-            let pool = match PgPool::connect(&PoolConfig::from_url(&url)).await {
+            rpc.secure_cookies = env.secure_cookies;
+            let pool = match PgPool::connect(&PoolConfig::from_url(&env.database_url)).await {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -490,8 +501,13 @@ async fn main() -> ExitCode {
             let config = ServerConfig {
                 bind,
                 root: path,
-                secure_cookies,
+                secure_cookies: env.secure_cookies,
+                ..ServerConfig::default()
             };
+            eprintln!(
+                "{DISPLAY_NAME} serve: env={} (migrate apply is explicit; /health /ready /metrics /events)",
+                env.deploy
+            );
             match serve(&config, Arc::new(Mutex::new(rpc)), pool, views).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
@@ -572,6 +588,7 @@ async fn main() -> ExitCode {
                 bind: bind.clone(),
                 root: path.clone(),
                 secure_cookies,
+                ..ServerConfig::default()
             };
 
             let watch_handles = Arc::clone(&handles);
@@ -646,42 +663,51 @@ async fn main() -> ExitCode {
                 }
             }
         },
-        Commands::Init { path } => match init_app(&path) {
-            Ok(init) => {
-                for p in &init.written {
-                    println!("  wrote {}", p.display());
-                }
-                let result = check(&path);
-                if !result.ok {
-                    eprintln!(
-                        "error: scaffolded app failed check:\n{}",
-                        format_check(&result, false)
-                    );
-                    return ExitCode::from(1);
-                }
-                let ir = result.ir.expect("ok implies ir");
-                match write_manifest(&path, &build_manifest(&path, &ir)) {
-                    Ok(manifest_path) => {
-                        println!("  wrote {}", manifest_path.display());
-                        println!(
-                            "{DISPLAY_NAME} init: ok — {} resource(s) at {}",
-                            ir.resources.len(),
-                            path.display()
+        Commands::Init { path, docker } => {
+            match init_app_with_options(&path, &InitOptions { docker }) {
+                Ok(init) => {
+                    for p in &init.written {
+                        println!("  wrote {}", p.display());
+                    }
+                    let result = check(&path);
+                    if !result.ok {
+                        eprintln!(
+                            "error: scaffolded app failed check:\n{}",
+                            format_check(&result, false)
                         );
-                        println!("See CONVENTIONS.md in the app (and the framework repo root).");
-                        ExitCode::SUCCESS
+                        return ExitCode::from(1);
                     }
-                    Err(e) => {
-                        eprintln!("error: write manifest: {e}");
-                        ExitCode::from(1)
+                    let ir = result.ir.expect("ok implies ir");
+                    match write_manifest(&path, &build_manifest(&path, &ir)) {
+                        Ok(manifest_path) => {
+                            println!("  wrote {}", manifest_path.display());
+                            println!(
+                                "{DISPLAY_NAME} init: ok — {} resource(s) at {}",
+                                ir.resources.len(),
+                                path.display()
+                            );
+                            if docker {
+                                println!(
+                                    "{DISPLAY_NAME} init: docker files written — copy a linux `puddly` binary next to Dockerfile before compose up"
+                                );
+                            }
+                            println!(
+                                "See CONVENTIONS.md in the app (and the framework repo root)."
+                            );
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("error: write manifest: {e}");
+                            ExitCode::from(1)
+                        }
                     }
                 }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(1)
+                }
             }
-            Err(e) => {
-                eprintln!("error: {e}");
-                ExitCode::from(1)
-            }
-        },
+        }
     }
 }
 

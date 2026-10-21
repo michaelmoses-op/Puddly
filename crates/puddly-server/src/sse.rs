@@ -2,13 +2,21 @@
 //!
 //! Single-instance only: [`tokio::sync::broadcast`] of JSON events. Multi-instance
 //! fan-out via Postgres `LISTEN/NOTIFY` is deferred (extends ADR-010).
+//!
+//! Step 23 adds graceful drain: [`SseHub::begin_shutdown`] stops new streams and
+//! waits for active writers to finish (ADR-041).
 
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use std::time::Duration;
+use tokio::sync::{broadcast, Notify};
 
 /// Default broadcast capacity (lagging subscribers drop oldest).
 const DEFAULT_CAPACITY: usize = 256;
+
+/// SSE comment frame sent when the hub begins draining.
+pub const SSE_SHUTDOWN_FRAME: &str = ": puddly-shutdown\n\n";
 
 /// One realtime event published after a successful mutating RPC.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,10 +75,14 @@ fn past_tense(op: &str) -> &'static str {
 /// Keep-alive comment frame (SSE comment lines start with `:`).
 pub const SSE_KEEPALIVE: &str = ": keep-alive\n\n";
 
-/// Shared in-process broadcast hub.
-#[derive(Debug, Clone)]
+/// Shared in-process broadcast hub with active-connection tracking for drain.
+#[derive(Debug)]
 pub struct SseHub {
     tx: broadcast::Sender<String>,
+    /// Live [`crate::serve::stream_sse`] writers (not bare `subscribe()` receivers).
+    active: AtomicUsize,
+    shutting_down: AtomicBool,
+    notify: Notify,
 }
 
 impl SseHub {
@@ -80,7 +92,12 @@ impl SseHub {
 
     pub fn with_capacity(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity.max(1));
-        Self { tx }
+        Self {
+            tx,
+            active: AtomicUsize::new(0),
+            shutting_down: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
     }
 
     pub fn shared() -> Arc<Self> {
@@ -105,14 +122,93 @@ impl SseHub {
         self.tx.subscribe()
     }
 
+    /// Broadcast receiver count (includes lagging subscribers). Prefer
+    /// [`Self::active_connections`] for drain.
     pub fn receiver_count(&self) -> usize {
         self.tx.receiver_count()
+    }
+
+    /// Number of active SSE write loops tracked by [`Self::connection_guard`].
+    pub fn active_connections(&self) -> usize {
+        self.active.load(Ordering::SeqCst)
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
+    }
+
+    /// Mark the hub draining: reject new streams, notify writers, send a
+    /// shutdown comment so clients see a clean end.
+    pub fn begin_shutdown(&self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+        let _ = self.publish_frame(SSE_SHUTDOWN_FRAME);
+        self.notify.notify_waiters();
+    }
+
+    /// Wait until [`Self::active_connections`] is zero or `timeout` elapses.
+    /// Returns `true` if fully drained.
+    pub async fn wait_drained(&self, timeout: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if self.active_connections() == 0 {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return self.active_connections() == 0;
+            }
+            tokio::select! {
+                _ = self.notify.notified() => {}
+                _ = tokio::time::sleep(remaining) => {
+                    return self.active_connections() == 0;
+                }
+            }
+        }
+    }
+
+    /// Resolves when [`Self::begin_shutdown`] has been called (or was already).
+    pub async fn wait_shutdown(&self) {
+        let notified = self.notify.notified();
+        if self.is_shutting_down() {
+            return;
+        }
+        notified.await;
+    }
+
+    /// Track one live SSE writer. Returns `None` if the hub is shutting down.
+    pub fn try_acquire(self: &Arc<Self>) -> Option<SseConnectionGuard> {
+        if self.is_shutting_down() {
+            return None;
+        }
+        self.active.fetch_add(1, Ordering::SeqCst);
+        // Re-check after increment to close a narrow race with begin_shutdown.
+        if self.is_shutting_down() {
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            self.notify.notify_waiters();
+            return None;
+        }
+        Some(SseConnectionGuard {
+            hub: Arc::clone(self),
+        })
     }
 }
 
 impl Default for SseHub {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// RAII counter for one SSE write loop.
+#[derive(Debug)]
+pub struct SseConnectionGuard {
+    hub: Arc<SseHub>,
+}
+
+impl Drop for SseConnectionGuard {
+    fn drop(&mut self) {
+        self.hub.active.fetch_sub(1, Ordering::SeqCst);
+        self.hub.notify.notify_waiters();
     }
 }
 
@@ -153,5 +249,18 @@ mod tests {
         assert_eq!(ev.type_name, "todo.created");
         let ev = event_from_rpc("todo.archive", &json!({ "archived": "1" })).unwrap();
         assert_eq!(ev.type_name, "todo.archived");
+    }
+
+    #[tokio::test]
+    async fn drain_rejects_new_and_waits() {
+        let hub = SseHub::shared();
+        let guard = hub.try_acquire().expect("open");
+        assert_eq!(hub.active_connections(), 1);
+        hub.begin_shutdown();
+        assert!(hub.is_shutting_down());
+        assert!(hub.try_acquire().is_none());
+        drop(guard);
+        assert!(hub.wait_drained(Duration::from_secs(1)).await);
+        assert_eq!(hub.active_connections(), 0);
     }
 }
