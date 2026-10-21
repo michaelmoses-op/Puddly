@@ -8,6 +8,7 @@
 //! - Async dispatch (ADR-028)
 //! - Opt-in REST + OpenAPI (ADR-045 / Step 27)
 //! - Action `ctx.db` nested CRUD host (ADR-046 / Step 28)
+//! - IPC / action error codes → HTTP status (ADR-049 / Step 31)
 
 mod access_gate;
 mod action_db;

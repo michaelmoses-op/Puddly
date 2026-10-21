@@ -44,6 +44,8 @@ impl RpcError {
             Self::Auth(AuthError::InvalidCredentials) => 401,
             Self::Auth(AuthError::AccessDenied) => 403,
             Self::Auth(AuthError::EmailTaken) => 409,
+            // Action / sidecar wire codes (ADR-049); uncoded action → 500.
+            Self::Action(a) => a.ipc_code().map(|c| c.http_status()).unwrap_or(500),
             _ => 500,
         }
     }

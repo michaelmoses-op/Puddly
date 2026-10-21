@@ -123,9 +123,11 @@ async fn ctx_db_get_forbidden_for_other_owner() {
     let resp = rt.handle(&req, &mut exec).await;
     assert!(!resp.ok, "expected action failure, got {resp:?}");
     let err = resp.error.as_ref().expect("error body");
-    assert_eq!(err.code, "action");
+    // Nested ctx.db forbidden re-emitted as wire code → HTTP 403 (ADR-049).
+    assert_eq!(err.code, "forbidden", "{err:?}");
+    assert_eq!(err.status, 403, "{err:?}");
     assert!(
-        err.message.contains("forbidden") || err.message.contains("run_failed"),
+        err.message.contains("forbidden"),
         "message={}",
         err.message
     );

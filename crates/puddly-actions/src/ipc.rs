@@ -1,12 +1,13 @@
 //! Action IPC JSONL protocol + Node sidecar runner (Steps 8–13 / 28).
 //!
-//! Protocol v2 (ADR-031 / ADR-046):
+//! Protocol v2 (ADR-031 / ADR-046 / ADR-049):
 //! - Host and sidecar exchange JSONL on stdin/stdout.
 //! - Every request/response carries `id` (string or u64) for multiplexing.
 //! - Long-lived worker is the default; set `PUDDLY_ACTION_SIDECAR_ONESHOT=1`
 //!   for process-per-call.
 //! - Additive nested `op: "db"` from sidecar → host while a `run` is in flight
 //!   (action `ctx.db` helpers). Keep stdin open until the final `run` response.
+//! - Sidecar error codes map to RPC/REST HTTP status (ADR-049).
 //!
 //! Sidecar template: `tools/puddly-action-sidecar.mjs`.
 //! Generated copy: `.puddly/generated/action-sidecar.mjs` (`puddly build`).
@@ -20,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::str::FromStr;
 use std::sync::Mutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -528,11 +530,14 @@ async fn drive_roundtrip(
         if resp.ok {
             return Ok(resp.data.unwrap_or_else(|| json!({})));
         }
-        let msg = resp
-            .error
-            .map(|e| format!("{}: {}", e.code, e.message))
-            .unwrap_or_else(|| "ipc error".into());
-        return Err(ActionError::msg(msg));
+        // Preserve frozen wire codes for HTTP mapping (ADR-049).
+        return Err(match resp.error {
+            Some(e) => match IpcErrorCode::from_str(&e.code) {
+                Ok(code) => ActionError::db(code, e.message),
+                Err(_) => ActionError::msg(format!("{}: {}", e.code, e.message)),
+            },
+            None => ActionError::msg("ipc error"),
+        });
     }
 }
 
