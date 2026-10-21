@@ -5,6 +5,7 @@ use crate::error::{ServerError, ServerResult};
 use crate::http::{
     parse_http_request, write_http_response, write_sse_headers, HttpRequest, HttpResponse,
 };
+use crate::metrics::Metrics;
 use crate::sse::{event_from_rpc, SseHub, SSE_KEEPALIVE};
 use crate::view_load::{
     resolve_load, resolve_static_load, unauthorized_html, unavailable_html, LoadOutcome,
@@ -23,11 +24,16 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
+/// Default time to wait for SSE writers after SIGTERM / ctrl-c (ADR-041).
+pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub bind: String,
     pub root: PathBuf,
     pub secure_cookies: bool,
+    /// How long to wait for SSE connections to drain on shutdown.
+    pub drain_timeout: Duration,
 }
 
 impl Default for ServerConfig {
@@ -36,6 +42,7 @@ impl Default for ServerConfig {
             bind: "127.0.0.1:3000".into(),
             root: PathBuf::from("."),
             secure_cookies: false,
+            drain_timeout: DEFAULT_DRAIN_TIMEOUT,
         }
     }
 }
@@ -43,6 +50,9 @@ impl Default for ServerConfig {
 /// Async accept loop. Check out a pool connection per RPC / view-load request.
 /// Health / island-runtime / SSE GETs skip the pool. `RpcServer` remains behind a
 /// mutex for in-memory session state. Creates a shared [`SseHub`] for `GET /events`.
+///
+/// Stops accepting on ctrl-c / SIGTERM, then drains SSE (ADR-041). Does **not**
+/// run migrations — use `puddly migrate apply` explicitly.
 pub async fn serve<S, R>(
     config: &ServerConfig,
     rpc: Arc<Mutex<RpcServer<S, R>>>,
@@ -68,26 +78,90 @@ where
     S: SessionStore + Send + 'static,
     R: ActionRunner + Send + 'static,
 {
+    serve_with_hub_metrics(config, rpc, pool, views, hub, Metrics::shared()).await
+}
+
+/// Full production accept loop with shared metrics.
+pub async fn serve_with_hub_metrics<S, R>(
+    config: &ServerConfig,
+    rpc: Arc<Mutex<RpcServer<S, R>>>,
+    pool: PgPool,
+    views: Arc<ViewBundle>,
+    hub: Arc<SseHub>,
+    metrics: Arc<Metrics>,
+) -> ServerResult<()>
+where
+    S: SessionStore + Send + 'static,
+    R: ActionRunner + Send + 'static,
+{
     let listener = TcpListener::bind(&config.bind).await?;
     eprintln!(
         "{DISPLAY_NAME} server listening on http://{}",
         config.bind
     );
+
     loop {
-        let (stream, _) = listener.accept().await?;
-        let rpc = Arc::clone(&rpc);
-        let pool = pool.clone();
-        let views = Arc::clone(&views);
-        let hub = Arc::clone(&hub);
-        tokio::spawn(async move {
-            if let Err(e) = handle_stream(stream, &rpc, &pool, &views, &hub).await {
-                eprintln!("request error: {e}");
+        tokio::select! {
+            biased;
+            _ = shutdown_signal() => {
+                eprintln!("{DISPLAY_NAME} server: shutdown signal — draining SSE…");
+                break;
             }
-        });
+            accepted = listener.accept() => {
+                let (stream, _) = accepted?;
+                let rpc = Arc::clone(&rpc);
+                let pool = pool.clone();
+                let views = Arc::clone(&views);
+                let hub = Arc::clone(&hub);
+                let metrics = Arc::clone(&metrics);
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        handle_stream(stream, &rpc, &pool, &views, &hub, &metrics).await
+                    {
+                        eprintln!("request error: {e}");
+                    }
+                });
+            }
+        }
+    }
+
+    hub.begin_shutdown();
+    let drained = hub.wait_drained(config.drain_timeout).await;
+    if drained {
+        eprintln!("{DISPLAY_NAME} server: SSE drained");
+    } else {
+        eprintln!(
+            "{DISPLAY_NAME} server: SSE drain timed out ({} still active)",
+            hub.active_connections()
+        );
+    }
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut sig) = signal(SignalKind::terminate()) {
+            sig.recv().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }
 
 /// Dev accept loop: hot-swappable views, optional RPC pool, `/__dev` panel.
+/// Also drains SSE on ctrl-c / SIGTERM (same as serve).
 pub async fn serve_dev<S, R>(
     config: &ServerConfig,
     handles: Arc<DevHandles<S, R>>,
@@ -108,15 +182,27 @@ where
         config.bind
     );
     loop {
-        let (stream, _) = listener.accept().await?;
-        let handles = Arc::clone(&handles);
-        let pool = pool.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_stream_dev(stream, &handles, pool.as_ref()).await {
-                eprintln!("request error: {e}");
+        tokio::select! {
+            biased;
+            _ = shutdown_signal() => {
+                eprintln!("{DISPLAY_NAME} dev: shutdown signal — draining SSE…");
+                break;
             }
-        });
+            accepted = listener.accept() => {
+                let (stream, _) = accepted?;
+                let handles = Arc::clone(&handles);
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_stream_dev(stream, &handles, pool.as_ref()).await {
+                        eprintln!("request error: {e}");
+                    }
+                });
+            }
+        }
     }
+    handles.hub.begin_shutdown();
+    let _ = handles.hub.wait_drained(config.drain_timeout).await;
+    Ok(())
 }
 
 /// Handle a single already-accepted stream (tests / one-shot) with a checked-out executor.
@@ -139,7 +225,7 @@ pub async fn serve_once_with_hub<S, R>(
     rpc: &Mutex<RpcServer<S, R>>,
     exec: &mut dyn Executor,
     views: Option<&ViewBundle>,
-    hub: Option<&SseHub>,
+    hub: Option<&Arc<SseHub>>,
 ) -> ServerResult<()>
 where
     S: SessionStore,
@@ -148,9 +234,10 @@ where
     let http_req = parse_http_request(stream).await?;
     if is_events_path(&http_req) {
         let hub = hub.ok_or_else(|| ServerError::msg("SSE hub required for /events"))?;
-        return stream_sse(stream, hub).await;
+        return stream_sse(stream, hub, None).await;
     }
-    let http_resp = dispatch_http(&http_req, rpc, exec, views, hub).await?;
+    let hub_ref = hub.map(|h| h.as_ref());
+    let http_resp = dispatch_http(&http_req, rpc, exec, views, hub_ref).await?;
     write_http_response(stream, &http_resp).await
 }
 
@@ -159,16 +246,29 @@ async fn handle_stream<S, R>(
     rpc: &Mutex<RpcServer<S, R>>,
     pool: &PgPool,
     views: &ViewBundle,
-    hub: &SseHub,
+    hub: &Arc<SseHub>,
+    metrics: &Metrics,
 ) -> ServerResult<()>
 where
     S: SessionStore,
     R: ActionRunner,
 {
     let http_req = parse_http_request(&mut stream).await?;
+    metrics.inc_http();
 
     if is_events_path(&http_req) {
-        return stream_sse(&mut stream, hub).await;
+        return stream_sse(&mut stream, hub, Some(metrics)).await;
+    }
+
+    if is_ready_path(&http_req) {
+        let resp = readiness_from_pool(pool).await;
+        return write_http_response(&mut stream, &resp).await;
+    }
+
+    if is_metrics_path(&http_req) {
+        let body = metrics.snapshot(Some(hub.as_ref()), Some(pool));
+        let resp = HttpResponse::json(200, "OK", &body);
+        return write_http_response(&mut stream, &resp).await;
     }
 
     if let Some(http_resp) = try_dispatch_static_get(&http_req)? {
@@ -205,7 +305,16 @@ where
         .get()
         .await
         .map_err(|e| ServerError::msg(e.to_string()))?;
-    let http_resp = dispatch_http(&http_req, rpc, &mut exec, None, Some(hub)).await?;
+    let http_resp =
+        dispatch_http_counted(
+            &http_req,
+            rpc,
+            &mut exec,
+            None,
+            Some(hub.as_ref()),
+            Some(metrics),
+        )
+        .await?;
     write_http_response(&mut stream, &http_resp).await
 }
 
@@ -221,7 +330,23 @@ where
     let http_req = parse_http_request(&mut stream).await?;
 
     if is_events_path(&http_req) {
-        return stream_sse(&mut stream, &handles.hub).await;
+        return stream_sse(&mut stream, &handles.hub, None).await;
+    }
+
+    if is_ready_path(&http_req) {
+        let resp = match pool {
+            Some(pool) => readiness_from_pool(pool).await,
+            None => HttpResponse::json(
+                503,
+                "Service Unavailable",
+                &json!({
+                    "ok": false,
+                    "ready": false,
+                    "error": "no DATABASE_URL (view-only dev)"
+                }),
+            ),
+        };
+        return write_http_response(&mut stream, &resp).await;
     }
 
     if let Some(http_resp) = try_dispatch_dev_meta(&http_req, handles).await? {
@@ -318,6 +443,7 @@ where
 /// Handle GET routes that do not need an [`Executor`] or view load (health / islands JS).
 /// View SSR is async — use [`dispatch_http`] / [`dispatch_http_dev`] instead.
 /// SSE (`GET /events`) is long-lived and handled by [`stream_sse`], not here.
+/// Ready / metrics need a pool — see [`readiness_from_pool`] / accept-loop handlers.
 pub fn try_dispatch_get(
     http_req: &HttpRequest,
     views: Option<&ViewBundle>,
@@ -333,7 +459,27 @@ fn try_dispatch_static_get(http_req: &HttpRequest) -> ServerResult<Option<HttpRe
     let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
 
     if path == "/health" || path == "/healthz" {
-        return Ok(Some(HttpResponse::json(200, "OK", &json!({ "ok": true }))));
+        return Ok(Some(HttpResponse::json(
+            200,
+            "OK",
+            &json!({
+                "ok": true,
+                "service": DISPLAY_NAME,
+                "live": true,
+            }),
+        )));
+    }
+    // Ready without a pool (unit-test / dispatch_http path) → not ready.
+    if path == "/ready" || path == "/readyz" {
+        return Ok(Some(HttpResponse::json(
+            503,
+            "Service Unavailable",
+            &json!({
+                "ok": false,
+                "ready": false,
+                "error": "readiness requires the accept loop (pool check)"
+            }),
+        )));
     }
     if path == "/puddly-islands.js" {
         return Ok(Some(HttpResponse::js(200, "OK", ISLANDS_RUNTIME_JS)));
@@ -349,11 +495,75 @@ fn is_events_path(http_req: &HttpRequest) -> bool {
     path == "/events" || path == "/sse"
 }
 
+fn is_ready_path(http_req: &HttpRequest) -> bool {
+    if !http_req.method.eq_ignore_ascii_case("GET") {
+        return false;
+    }
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+    path == "/ready" || path == "/readyz"
+}
+
+fn is_metrics_path(http_req: &HttpRequest) -> bool {
+    if !http_req.method.eq_ignore_ascii_case("GET") {
+        return false;
+    }
+    let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
+    path == "/metrics"
+}
+
+/// Probe the pool: checkout + release. Used by `GET /ready` / `/readyz`.
+pub async fn readiness_from_pool(pool: &PgPool) -> HttpResponse {
+    match pool.get().await {
+        Ok(_conn) => {
+            let s = pool.status();
+            HttpResponse::json(
+                200,
+                "OK",
+                &json!({
+                    "ok": true,
+                    "ready": true,
+                    "pool": {
+                        "size": s.size,
+                        "available": s.available,
+                        "max_size": s.max_size,
+                    }
+                }),
+            )
+        }
+        Err(e) => HttpResponse::json(
+            503,
+            "Service Unavailable",
+            &json!({
+                "ok": false,
+                "ready": false,
+                "error": e.to_string(),
+            }),
+        ),
+    }
+}
+
 /// Long-lived SSE write loop: headers, initial keep-alive comment, then hub events.
+/// Tracks the connection for graceful drain; rejects new clients after shutdown.
 pub async fn stream_sse<W: AsyncWriteExt + Unpin>(
     writer: &mut W,
-    hub: &SseHub,
+    hub: &Arc<SseHub>,
+    metrics: Option<&Metrics>,
 ) -> ServerResult<()> {
+    let Some(_guard) = hub.try_acquire() else {
+        if let Some(m) = metrics {
+            m.inc_sse_rejected();
+        }
+        let resp = HttpResponse::json(
+            503,
+            "Service Unavailable",
+            &json!({ "ok": false, "error": "server shutting down" }),
+        );
+        return write_http_response(writer, &resp).await;
+    };
+    if let Some(m) = metrics {
+        m.inc_sse_connect();
+    }
+
     write_sse_headers(writer).await?;
     writer.write_all(SSE_KEEPALIVE.as_bytes()).await?;
     writer.flush().await?;
@@ -366,6 +576,11 @@ pub async fn stream_sse<W: AsyncWriteExt + Unpin>(
 
     loop {
         tokio::select! {
+            _ = hub.wait_shutdown() => {
+                let _ = writer.write_all(crate::sse::SSE_SHUTDOWN_FRAME.as_bytes()).await;
+                let _ = writer.flush().await;
+                break;
+            }
             _ = keepalive.tick() => {
                 if writer.write_all(SSE_KEEPALIVE.as_bytes()).await.is_err() {
                     break;
@@ -502,6 +717,21 @@ where
     S: SessionStore,
     R: ActionRunner,
 {
+    dispatch_http_counted(http_req, rpc, exec, views, hub, None).await
+}
+
+async fn dispatch_http_counted<S, R>(
+    http_req: &HttpRequest,
+    rpc: &Mutex<RpcServer<S, R>>,
+    exec: &mut dyn Executor,
+    views: Option<&ViewBundle>,
+    hub: Option<&SseHub>,
+    metrics: Option<&Metrics>,
+) -> ServerResult<HttpResponse>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
     if let Some(resp) = try_dispatch_static_get(http_req)? {
         return Ok(resp);
     }
@@ -548,6 +778,14 @@ where
         let mut rpc = rpc.lock().await;
         rpc.handle(&rpc_req, exec).await
     };
+
+    if let Some(m) = metrics {
+        if rpc_resp.ok {
+            m.inc_rpc_ok();
+        } else {
+            m.inc_rpc_err();
+        }
+    }
 
     if rpc_resp.ok {
         if let (Some(hub), Some(data)) = (hub, rpc_resp.data.as_ref()) {

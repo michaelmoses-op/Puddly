@@ -55,7 +55,7 @@ async fn events_endpoint_streams_comment_and_event() {
         let mut buf = vec![0u8; 4096];
         let _ = stream.read(&mut buf).await;
         // Minimal: ignore request body; just stream SSE.
-        stream_sse(&mut stream, &hub_accept).await.unwrap();
+        stream_sse(&mut stream, &hub_accept, None).await.unwrap();
     });
 
     let mut client = TcpStream::connect(addr).await.unwrap();
