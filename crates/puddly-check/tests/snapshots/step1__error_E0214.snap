@@ -1,0 +1,27 @@
+---
+source: crates/puddly-check/tests/step1.rs
+expression: normalize_paths(&result.json)
+---
+{
+  "ok": false,
+  "error_count": 1,
+  "diagnostics": [
+    {
+      "code": "E0214",
+      "severity": "error",
+      "message": "`rule.member` is not valid on `create`",
+      "path": "<WORKSPACE>/tests/fixtures/invalid/E0214/bad.resource.ts",
+      "start": 171,
+      "end": 199,
+      "line": 8,
+      "column": 13,
+      "labels": [],
+      "suggestion": {
+        "message": "use authenticated (or owner) on create; insert join rows separately",
+        "patch": "create: rule.authenticated()"
+      },
+      "root_id": "E0214:project:create",
+      "follow_on": false
+    }
+  ]
+}

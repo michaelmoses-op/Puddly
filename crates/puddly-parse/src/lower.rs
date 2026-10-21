@@ -866,20 +866,7 @@ fn lower_rule(expr: &Expression<'_>, path: &Path) -> Result<RuleIr, Vec<Diag>> {
                 role,
             })
         }
-        "member" => {
-            let Some((field, _)) = call.arguments.first().and_then(string_arg) else {
-                return Err(vec![Diagnostic::error(
-                    ErrorCode::E0205,
-                    path.to_path_buf(),
-                    ox_span(call.span),
-                    "`rule.member` requires a field name string",
-                )]);
-            };
-            Ok(RuleIr::Member {
-                span: ox_span(call.span),
-                field,
-            })
-        }
+        "member" => lower_member_rule(call, path),
         other => Err(vec![Diagnostic::error(
             ErrorCode::E0208,
             path.to_path_buf(),
@@ -1017,6 +1004,136 @@ fn binding_name(id: &BindingPattern<'_>) -> Option<String> {
 
 fn is_ident_call(call: &CallExpression<'_>, name: &str) -> bool {
     matches!(&call.callee, Expression::Identifier(id) if id.name.as_str() == name)
+}
+
+/// `rule.member("joinResource")` or `rule.member({ via, on?, user? })` (ADR-047).
+fn lower_member_rule(call: &CallExpression<'_>, path: &Path) -> Result<RuleIr, Vec<Diag>> {
+    let span = ox_span(call.span);
+    let Some(arg) = call.arguments.first() else {
+        return Err(vec![Diagnostic::error(
+            ErrorCode::E0205,
+            path.to_path_buf(),
+            span,
+            "`rule.member` requires a join resource name or `{ via, on?, user? }`",
+        )
+        .with_suggestion(
+            "pass the join resource",
+            Some("rule.member({ via: \"projectMember\", on: \"project\", user: \"user\" })".into()),
+        )]);
+    };
+
+    if let Some((via, _)) = string_arg(arg) {
+        return Ok(RuleIr::Member {
+            span,
+            via,
+            on: String::new(),
+            user_field: String::new(),
+        });
+    }
+
+    let Some(obj) = object_arg(arg) else {
+        return Err(vec![Diagnostic::error(
+            ErrorCode::E0205,
+            path.to_path_buf(),
+            ox_span(arg.span()),
+            "`rule.member` requires a string or object literal",
+        )
+        .with_suggestion(
+            "use object form",
+            Some("rule.member({ via: \"projectMember\", on: \"project\", user: \"user\" })".into()),
+        )]);
+    };
+
+    let mut via: Option<String> = None;
+    let mut on = String::new();
+    let mut user_field = String::new();
+    let mut diags = Vec::new();
+
+    for prop in &obj.properties {
+        let ObjectPropertyKind::ObjectProperty(p) = prop else {
+            diags.push(Diagnostic::error(
+                ErrorCode::E0101,
+                path.to_path_buf(),
+                ox_span(obj.span),
+                "spread is not allowed in `rule.member` options",
+            ));
+            continue;
+        };
+        let Some(key) = static_key(&p.key) else {
+            diags.push(Diagnostic::error(
+                ErrorCode::E0205,
+                path.to_path_buf(),
+                ox_span(p.span),
+                "`rule.member` option keys must be static identifiers",
+            ));
+            continue;
+        };
+        match key.as_str() {
+            "via" => match string_lit(&p.value) {
+                Some((v, _)) => via = Some(v),
+                None => diags.push(Diagnostic::error(
+                    ErrorCode::E0205,
+                    path.to_path_buf(),
+                    ox_span(p.value.span()),
+                    "`via` must be a string (join resource name)",
+                )),
+            },
+            "on" => match string_lit(&p.value) {
+                Some((v, _)) => on = v,
+                None => diags.push(Diagnostic::error(
+                    ErrorCode::E0205,
+                    path.to_path_buf(),
+                    ox_span(p.value.span()),
+                    "`on` must be a string (join column → resource id)",
+                )),
+            },
+            "user" => match string_lit(&p.value) {
+                Some((v, _)) => user_field = v,
+                None => diags.push(Diagnostic::error(
+                    ErrorCode::E0205,
+                    path.to_path_buf(),
+                    ox_span(p.value.span()),
+                    "`user` must be a string (join column → user id)",
+                )),
+            },
+            other => diags.push(
+                Diagnostic::error(
+                    ErrorCode::E0205,
+                    path.to_path_buf(),
+                    ox_span(p.span),
+                    format!("unknown `rule.member` option `{other}`"),
+                )
+                .with_suggestion("allowed: via, on, user", None),
+            ),
+        }
+    }
+
+    let Some(via) = via else {
+        diags.push(
+            Diagnostic::error(
+                ErrorCode::E0205,
+                path.to_path_buf(),
+                span,
+                "`rule.member` requires `via` (join resource name)",
+            )
+            .with_suggestion(
+                "set via",
+                Some("rule.member({ via: \"projectMember\" })".into()),
+            ),
+        );
+        return Err(diags);
+    };
+
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+
+    Ok(RuleIr::Member {
+        span,
+        via,
+        on,
+        user_field,
+    })
 }
 
 fn member_call(call: &CallExpression<'_>) -> Option<(String, String)> {

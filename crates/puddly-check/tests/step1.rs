@@ -21,9 +21,9 @@ fn valid_todo_slice_ok() {
     let result = check(fixture("examples/todo-slice"));
     assert!(result.ok, "expected ok, got:\n{}", result.text);
     let ir = result.ir.expect("ir");
-    assert_eq!(ir.resources.len(), 3);
+    assert_eq!(ir.resources.len(), 4);
     let names: Vec<_> = ir.resources.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, ["project", "todo", "user"]);
+    assert_eq!(names, ["project", "projectMember", "todo", "user"]);
 
     // Deterministic serialization of resources only (skip file bodies).
     let slim = serde_json::json!({
@@ -61,7 +61,12 @@ fn rule_name(rule: &puddly_ir::RuleIr) -> String {
         puddly_ir::RuleIr::Authenticated { .. } => "authenticated".into(),
         puddly_ir::RuleIr::Owner { field, .. } => format!("owner:{field}"),
         puddly_ir::RuleIr::Role { role, .. } => format!("role:{role}"),
-        puddly_ir::RuleIr::Member { field, .. } => format!("member:{field}"),
+        puddly_ir::RuleIr::Member {
+            via,
+            on,
+            user_field,
+            ..
+        } => format!("member:{via}:{on}:{user_field}"),
     }
 }
 
@@ -81,6 +86,8 @@ fn every_error_code_has_fixture() {
         ErrorCode::E0209,
         ErrorCode::E0210,
         ErrorCode::E0211,
+        ErrorCode::E0213,
+        ErrorCode::E0214,
     ];
     for code in codes_with_fixtures {
         let dir = fixture(&format!("tests/fixtures/invalid/{code}"));

@@ -22,7 +22,8 @@ Short rules for apps (and for AI). Details live in gitignored `docs/` ADRs.
 - Declare with `resource("name", { fields, access, … })`.
 - Table name = resource name. PK = `field.id()` (UUID).
 - Refs: `field.ref("otherResource")`. Use `include` on list/load to batch-fetch (no JOIN).
-- Access: one rule per op (`authenticated` / `owner(field)` / …).
+- Access: one rule per op (`authenticated` / `owner(field)` / `member({ via, on?, user? })` / …).
+  `member` is join-table membership (not row equality); `create` must not use `member`.
 
 ## Views & load
 

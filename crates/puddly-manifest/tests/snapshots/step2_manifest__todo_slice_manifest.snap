@@ -50,15 +50,19 @@ expression: render_manifest_json(&a)
         {
           "name": "list",
           "rule": {
-            "kind": "owner",
-            "field": "owner"
+            "kind": "member",
+            "via": "projectMember",
+            "on": "project",
+            "userField": "user"
           }
         },
         {
           "name": "update",
           "rule": {
-            "kind": "owner",
-            "field": "owner"
+            "kind": "member",
+            "via": "projectMember",
+            "on": "project",
+            "userField": "user"
           }
         }
       ],
@@ -67,8 +71,72 @@ expression: render_manifest_json(&a)
         "user"
       ],
       "referencedBy": [
+        "projectMember",
         "todo"
       ]
+    },
+    {
+      "name": "projectMember",
+      "exportName": "ProjectMember",
+      "path": "features/projects/projectMember.resource.ts",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "id"
+        },
+        {
+          "name": "project",
+          "kind": "ref",
+          "target": "project"
+        },
+        {
+          "name": "user",
+          "kind": "ref",
+          "target": "user"
+        },
+        {
+          "name": "createdAt",
+          "kind": "timestamp",
+          "sortable": true,
+          "auto": true
+        }
+      ],
+      "constraints": [],
+      "access": [
+        {
+          "name": "create",
+          "rule": {
+            "kind": "authenticated"
+          }
+        },
+        {
+          "name": "delete",
+          "rule": {
+            "kind": "owner",
+            "field": "user"
+          }
+        },
+        {
+          "name": "list",
+          "rule": {
+            "kind": "owner",
+            "field": "user"
+          }
+        },
+        {
+          "name": "update",
+          "rule": {
+            "kind": "owner",
+            "field": "user"
+          }
+        }
+      ],
+      "actions": [],
+      "refs": [
+        "project",
+        "user"
+      ],
+      "referencedBy": []
     },
     {
       "name": "todo",
@@ -246,6 +314,7 @@ expression: render_manifest_json(&a)
       "refs": [],
       "referencedBy": [
         "project",
+        "projectMember",
         "todo"
       ]
     }

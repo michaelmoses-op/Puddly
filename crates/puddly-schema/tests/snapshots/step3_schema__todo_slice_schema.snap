@@ -51,6 +51,55 @@ expression: "serde_json::to_string_pretty(&a).unwrap()"
       ]
     },
     {
+      "name": "projectMember",
+      "columns": [
+        {
+          "name": "id",
+          "sqlType": "UUID",
+          "notNull": true,
+          "defaultSql": "gen_random_uuid()"
+        },
+        {
+          "name": "project",
+          "sqlType": "UUID",
+          "notNull": true
+        },
+        {
+          "name": "user",
+          "sqlType": "UUID",
+          "notNull": true
+        },
+        {
+          "name": "createdAt",
+          "sqlType": "TIMESTAMPTZ",
+          "notNull": true,
+          "defaultSql": "now()"
+        }
+      ],
+      "primaryKey": "id",
+      "foreignKeys": [
+        {
+          "column": "project",
+          "referencesTable": "project",
+          "referencesColumn": "id"
+        },
+        {
+          "column": "user",
+          "referencesTable": "user",
+          "referencesColumn": "id"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_projectMember_createdAt",
+          "columns": [
+            "createdAt"
+          ],
+          "unique": false
+        }
+      ]
+    },
+    {
       "name": "todo",
       "columns": [
         {

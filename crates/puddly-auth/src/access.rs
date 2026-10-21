@@ -75,23 +75,12 @@ pub fn check_rule(
                 AccessDecision::Deny
             }
         }
-        RuleIr::Member { field, .. } => {
-            // Step 5: treat member like owner equality on a single id field.
-            // Multi-value membership (arrays / join tables) lands with RPC.
-            let Some(user) = user else {
-                return AccessDecision::Deny;
-            };
-            let Some(row) = row else {
-                return AccessDecision::Deny;
-            };
-            let Some(member_id) = row.get(field) else {
-                return AccessDecision::Deny;
-            };
-            if constant_eq(user.id.as_bytes(), member_id.as_bytes()) {
-                AccessDecision::Allow
-            } else {
-                AccessDecision::Deny
-            }
+        RuleIr::Member { .. } => {
+            // ADR-047: join-table membership needs a DB EXISTS / IN-subquery.
+            // Fail closed here so accidental `enforce()` cannot Allow; RPC uses
+            // `enforce_member` / list subquery instead.
+            let _ = (user, row);
+            AccessDecision::Deny
         }
     }
 }

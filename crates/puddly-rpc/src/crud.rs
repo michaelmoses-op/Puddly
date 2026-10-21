@@ -1,6 +1,8 @@
 //! Built-in list/get/create/update/delete RPC using compiled statements + access rules.
 
-use crate::access_gate::{enforce, list_owner_field, require_rule, row_values_from_db};
+use crate::access_gate::{
+    enforce, enforce_member, list_owner_field, member_join, require_rule, row_values_from_db,
+};
 use crate::context::RpcContext;
 use crate::error::{RpcError, RpcResult};
 use crate::list_body::apply_list_body;
@@ -48,12 +50,20 @@ async fn list(
     let rule = require_rule(resource, "list")?;
     let mut qb = QueryBuilder::for_resource(resource);
 
-    // Owner/member: require sign-in and inject equality that ANDs with body filters.
+    // Owner: equality on row field. Member: id IN (join subquery). Else sync enforce.
     if let Some(field) = list_owner_field(rule) {
         let user = ctx.user.as_ref().ok_or(RpcError::Unauthorized)?;
         qb = qb
             .require_eq(field, SqlValue::Uuid(user.id.clone()))
             .map_err(|e| RpcError::BadRequest(e.to_string()))?;
+    } else if let Some(join) = member_join(rule) {
+        let user = ctx.user.as_ref().ok_or(RpcError::Unauthorized)?;
+        qb = qb.require_member_of(
+            &join.via,
+            &join.on,
+            &join.user_field,
+            SqlValue::Uuid(user.id.clone()),
+        );
     } else {
         enforce(rule, ctx.user.as_ref(), None)?;
     }
@@ -207,14 +217,18 @@ async fn get(
     let stmt = book
         .get(&resource.name, PreparedKind::FindById)
         .ok_or_else(|| RpcError::msg(format!("no find statement for {}", resource.name)))?;
-    let rows = query_prepared(exec, stmt, &[SqlValue::Uuid(id)]).await?;
+    let rows = query_prepared(exec, stmt, &[SqlValue::Uuid(id.clone())]).await?;
     let row = rows
         .into_iter()
         .next()
         .ok_or_else(|| RpcError::NotFound(format!("{} not found", resource.name)))?;
     let values = row_values_from_db(&row);
     let rule = require_rule(resource, "get")?;
-    enforce(rule, ctx.user.as_ref(), Some(&values))?;
+    if let Some(join) = member_join(rule) {
+        enforce_member(&join, &id, ctx.user.as_ref(), exec).await?;
+    } else {
+        enforce(rule, ctx.user.as_ref(), Some(&values))?;
+    }
     Ok(decode_row_to_json(resource, &row)?)
 }
 
@@ -320,6 +334,7 @@ async fn ensure_default_project(
             SqlValue::Uuid(s) | SqlValue::Text(s) => Some(s.clone()),
             _ => None,
         }) {
+            ensure_project_membership(&id, user, book, exec).await?;
             obj.insert("project".into(), Value::String(id));
             return Ok(());
         }
@@ -337,7 +352,42 @@ async fn ensure_default_project(
         .clone();
     let params = params_for_insert(&stmt, &project_body)?;
     exec_prepared(exec, &stmt, &params).await?;
+    // Creator membership so `rule.member` list/update can see the project (ADR-047).
+    ensure_project_membership(&project_id, user, book, exec).await?;
     obj.insert("project".into(), Value::String(project_id));
+    Ok(())
+}
+
+/// Insert `projectMember` for (project, user) when the join resource exists.
+async fn ensure_project_membership(
+    project_id: &str,
+    user: &AuthUser,
+    book: &StatementBook,
+    exec: &mut dyn Executor,
+) -> RpcResult<()> {
+    let insert = match book.get("projectMember", PreparedKind::Insert) {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+    let existing = exec
+        .query(
+            "SELECT 1 AS \"ok\" FROM \"projectMember\" WHERE \"project\" = $1 AND \"user\" = $2 LIMIT 1",
+            &[
+                SqlValue::Uuid(project_id.to_string()),
+                SqlValue::Uuid(user.id.clone()),
+            ],
+        )
+        .await?;
+    if !existing.is_empty() {
+        return Ok(());
+    }
+    let body = json!({
+        "id": generate_user_id(),
+        "project": project_id,
+        "user": user.id,
+    });
+    let params = params_for_insert(insert, &body)?;
+    exec_prepared(exec, insert, &params).await?;
     Ok(())
 }
 
@@ -360,7 +410,11 @@ async fn update(
         .ok_or_else(|| RpcError::NotFound(format!("{} not found", resource.name)))?;
     let values = row_values_from_db(&existing);
     let rule = require_rule(resource, "update")?;
-    enforce(rule, ctx.user.as_ref(), Some(&values))?;
+    if let Some(join) = member_join(rule) {
+        enforce_member(&join, &id, ctx.user.as_ref(), exec).await?;
+    } else {
+        enforce(rule, ctx.user.as_ref(), Some(&values))?;
+    }
 
     let stmt = book
         .get(&resource.name, PreparedKind::UpdateById)
@@ -390,7 +444,11 @@ async fn delete(
         .ok_or_else(|| RpcError::NotFound(format!("{} not found", resource.name)))?;
     let values = row_values_from_db(&existing);
     let rule = require_rule(resource, "delete")?;
-    enforce(rule, ctx.user.as_ref(), Some(&values))?;
+    if let Some(join) = member_join(rule) {
+        enforce_member(&join, &id, ctx.user.as_ref(), exec).await?;
+    } else {
+        enforce(rule, ctx.user.as_ref(), Some(&values))?;
+    }
 
     let stmt = book
         .get(&resource.name, PreparedKind::DeleteById)

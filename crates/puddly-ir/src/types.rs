@@ -99,7 +99,16 @@ pub enum RuleIr {
     Authenticated { span: Span },
     Owner { span: Span, field: String },
     Role { span: Span, role: String },
-    Member { span: Span, field: String },
+    /// Join-table membership (ADR-047). `via` is the join resource; `on` is the
+    /// join column referencing this resource's id (empty → default to resource name
+    /// at validate/runtime); `user_field` is the join column for the signed-in user
+    /// (empty → `"user"`).
+    Member {
+        span: Span,
+        via: String,
+        on: String,
+        user_field: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

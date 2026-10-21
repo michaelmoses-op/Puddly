@@ -31,8 +31,12 @@ pub enum ErrorCode {
     E0210,
     /// Reserved resource name (`auth` is built-in RPC).
     E0211,
-    /// Documentation: `rule.member` equality placeholder (not a hard error by itself).
+    /// Documentation: `rule.member` join-table semantics (explain registry).
     E0212,
+    /// `rule.member` references an unknown join resource or join columns.
+    E0213,
+    /// `rule.member` used on `create` (invalid — no row to check membership against).
+    E0214,
     /// I/O or project layout problem (not a resource-rule error).
     E0900,
 }
@@ -54,6 +58,8 @@ impl ErrorCode {
             Self::E0210 => "E0210",
             Self::E0211 => "E0211",
             Self::E0212 => "E0212",
+            Self::E0213 => "E0213",
+            Self::E0214 => "E0214",
             Self::E0900 => "E0900",
         }
     }
@@ -169,7 +175,7 @@ pub static ERROR_REGISTRY: &[ErrorDoc] = &[
     ErrorDoc {
         code: ErrorCode::E0210,
         title: "access rule references unknown field",
-        explanation: "`rule.owner` / `rule.member` must name a field on the same resource.",
+        explanation: "`rule.owner` must name a field on the same resource.",
         example_bad: "update: rule.owner(\"owne\")",
         example_good: "update: rule.owner(\"owner\")",
     },
@@ -182,10 +188,24 @@ pub static ERROR_REGISTRY: &[ErrorDoc] = &[
     },
     ErrorDoc {
         code: ErrorCode::E0212,
-        title: "rule.member is an equality placeholder",
-        explanation: "`rule.member(field)` currently means the same as `rule.owner(field)`: the signed-in user's id must equal the row's field value. Multi-value membership via join tables is planned later. Prefer `rule.owner` when you mean single-owner equality; use `member` only when you intend to migrate to join-table membership.",
-        example_bad: "// expecting array/org membership today\nlist: rule.member(\"members\")",
-        example_good: "// single id field (current semantics)\nlist: rule.member(\"orgId\")\n// or explicit owner\nlist: rule.owner(\"owner\")",
+        title: "rule.member is join-table membership",
+        explanation: "`rule.member({ via, on?, user? })` (or `rule.member(\"via\")`) checks that a row exists in the join resource `via` with `<on> = resource.id` and `<user> = signed-in user id`. Prefer `rule.owner(field)` for single-owner equality on the row itself. `on` defaults to the protected resource name; `user` defaults to `\"user\"`.",
+        example_bad: "// old equality placeholder (removed)\nlist: rule.member(\"orgId\")",
+        example_good: "list: rule.member({ via: \"projectMember\", on: \"project\", user: \"user\" })\n// shorthand when join columns match conventions:\nlist: rule.member(\"projectMember\")",
+    },
+    ErrorDoc {
+        code: ErrorCode::E0213,
+        title: "rule.member join resource or columns invalid",
+        explanation: "`via` must name a declared resource. That join resource must have an `on` column (FK to the protected resource) and a `user` column (FK to `user`).",
+        example_bad: "list: rule.member(\"noSuchJoin\")",
+        example_good: "// declare projectMember with project: field.ref(\"project\"), user: field.ref(\"user\")\nlist: rule.member({ via: \"projectMember\", on: \"project\", user: \"user\" })",
+    },
+    ErrorDoc {
+        code: ErrorCode::E0214,
+        title: "rule.member is not valid on create",
+        explanation: "Create has no row id to test membership against. Use `rule.authenticated()` (or `rule.owner` only when the body already carries the owner field) on create; insert join-table rows separately.",
+        example_bad: "create: rule.member(\"projectMember\")",
+        example_good: "create: rule.authenticated()\nlist: rule.member(\"projectMember\")",
     },
     ErrorDoc {
         code: ErrorCode::E0900,
