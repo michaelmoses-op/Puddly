@@ -29,7 +29,8 @@ Short rules for apps (and for AI). Details live in gitignored `docs/` ADRs.
 - `export const load = { key: { list: "resource" } }` or `get` + `idFromQuery`, or `value`.
 - List load may set `include: ["refField"]` (or a string).
 - Optional realtime: `export const live = true` (or `live: true` in `load`) → SSR
-  `data-puddly-live="1"` + `EventSource('/events')` (single-instance SSE; ADR-040).
+  `data-puddly-live="1"` + `EventSource('/events')` (SSE; multi-instance via Postgres
+  `LISTEN/NOTIFY` on `puddly_live` — ADR-040 / ADR-043).
 - Default export is the page. Collections: one-level `.map((item) => …)`.
 - Islands are separate modules; SSR emits `data-puddly-island` + props.
 - Toggle without full reload on live pages: `data-puddly-reload="0"`.

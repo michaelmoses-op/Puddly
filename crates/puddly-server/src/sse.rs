@@ -1,7 +1,8 @@
 //! In-process SSE hub for realtime push (ADR-040 / Step 22).
 //!
-//! Single-instance only: [`tokio::sync::broadcast`] of JSON events. Multi-instance
-//! fan-out via Postgres `LISTEN/NOTIFY` is deferred (extends ADR-010).
+//! Local fan-out uses [`tokio::sync::broadcast`] of JSON events. Multi-instance
+//! fan-out via Postgres `LISTEN/NOTIFY` is wired in [`crate::live_fanout`]
+//! (ADR-043 / ADR-010): remotes refetch by resource+id after compact NOTIFY.
 //!
 //! Step 23 adds graceful drain: [`SseHub::begin_shutdown`] stops new streams and
 //! waits for active writers to finish (ADR-041).

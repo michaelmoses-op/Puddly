@@ -7,11 +7,13 @@
 //! Step 12 adds [`serve_dev`] / [`DevState`] for `puddly dev` (ADR-030).
 //! Step 22 adds SSE / `live: true` via [`SseHub`] + `GET /events` (ADR-040).
 //! Step 23 adds graceful SSE drain, `/ready`, env validation, `/metrics` (ADR-041).
+//! Step 25 adds multi-instance SSE via Postgres LISTEN/NOTIFY (ADR-043 / ADR-010).
 
 mod dev;
 mod env;
 mod error;
 mod http;
+mod live_fanout;
 mod metrics;
 mod serve;
 mod sse;
@@ -34,6 +36,10 @@ pub use serve::{
     dev_status_response, dispatch_http, dispatch_http_dev, readiness_from_pool, serve,
     serve_dev, serve_once, serve_once_with_hub, serve_with_hub, serve_with_hub_metrics,
     stream_sse, try_dispatch_get, try_dispatch_get_dev, ServerConfig, DEFAULT_DRAIN_TIMEOUT,
+};
+pub use live_fanout::{
+    apply_remote_payload, extract_resource_id, extract_row_version, fetch_row_for_live,
+    spawn_fanout_task, LiveBridge, LiveNotifyPayload, LIVE_NOTIFY_SCHEMA_V,
 };
 pub use sse::{
     event_from_rpc, SseConnectionGuard, SseEvent, SseHub, SSE_KEEPALIVE, SSE_SHUTDOWN_FRAME,

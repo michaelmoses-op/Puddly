@@ -7,8 +7,8 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 24** — generated Rust row structs (ADR-042) into `.puddly/generated/rows.rs`
-(`puddly build` / `client generate`). Prior: Step 23 prod hardening (ADR-041).
+**Build plan Step 25** — multi-instance SSE via Postgres LISTEN/NOTIFY (ADR-043 / ADR-010).
+Prior: Step 24 generated Rust row structs (ADR-042).
 
 ## Try the todo slice
 

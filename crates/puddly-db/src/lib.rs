@@ -8,6 +8,8 @@ mod recording;
 mod value;
 
 #[cfg(feature = "postgres")]
+mod notify;
+#[cfg(feature = "postgres")]
 mod pool;
 #[cfg(feature = "postgres")]
 mod postgres_exec;
@@ -16,6 +18,11 @@ pub use error::{DbError, DbResult};
 pub use recording::RecordingExecutor;
 pub use value::{DbRow, SqlValue};
 
+#[cfg(feature = "postgres")]
+pub use notify::{
+    pg_notify, spawn_listen, validate_channel, PgNotification, NOTIFY_PAYLOAD_MAX_BYTES,
+    PUDDLY_LIVE_CHANNEL,
+};
 #[cfg(feature = "postgres")]
 pub use pool::{PgPool, PoolStatus};
 #[cfg(feature = "postgres")]
