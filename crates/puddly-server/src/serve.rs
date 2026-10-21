@@ -5,6 +5,7 @@ use crate::error::{ServerError, ServerResult};
 use crate::http::{
     parse_http_request, write_http_response, write_sse_headers, HttpRequest, HttpResponse,
 };
+use crate::live_fanout::{spawn_fanout_task, LiveBridge};
 use crate::metrics::Metrics;
 use crate::sse::{event_from_rpc, SseHub, SSE_KEEPALIVE};
 use crate::view_load::{
@@ -34,6 +35,11 @@ pub struct ServerConfig {
     pub secure_cookies: bool,
     /// How long to wait for SSE connections to drain on shutdown.
     pub drain_timeout: Duration,
+    /// When set, start LISTEN/NOTIFY multi-instance SSE fan-out (Step 25).
+    /// Defaults to the pool URL inside [`serve_with_hub_metrics`].
+    pub database_url: Option<String>,
+    /// Opt out of LISTEN even when a database URL is available.
+    pub live_fanout: bool,
 }
 
 impl Default for ServerConfig {
@@ -43,6 +49,8 @@ impl Default for ServerConfig {
             root: PathBuf::from("."),
             secure_cookies: false,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
+            database_url: None,
+            live_fanout: true,
         }
     }
 }
@@ -100,6 +108,22 @@ where
         config.bind
     );
 
+    let db_url = config
+        .database_url
+        .clone()
+        .unwrap_or_else(|| pool.connection_string().to_string());
+    let live = LiveBridge::shared(config.live_fanout && !db_url.is_empty());
+    let fanout_join = if live.enabled {
+        Some(spawn_fanout_task(
+            db_url,
+            Arc::clone(&hub),
+            Arc::clone(&live),
+            pool.clone(),
+        ))
+    } else {
+        None
+    };
+
     loop {
         tokio::select! {
             biased;
@@ -114,9 +138,10 @@ where
                 let views = Arc::clone(&views);
                 let hub = Arc::clone(&hub);
                 let metrics = Arc::clone(&metrics);
+                let live = Arc::clone(&live);
                 tokio::spawn(async move {
                     if let Err(e) =
-                        handle_stream(stream, &rpc, &pool, &views, &hub, &metrics).await
+                        handle_stream(stream, &rpc, &pool, &views, &hub, &metrics, &live).await
                     {
                         eprintln!("request error: {e}");
                     }
@@ -125,6 +150,9 @@ where
         }
     }
 
+    if let Some(j) = fanout_join {
+        j.abort();
+    }
     hub.begin_shutdown();
     let drained = hub.wait_drained(config.drain_timeout).await;
     if drained {
@@ -181,6 +209,30 @@ where
         "{DISPLAY_NAME} dev listening on http://{} ({mode})",
         config.bind
     );
+
+    let fanout_join = if config.live_fanout {
+        if let Some(ref pool) = pool {
+            let url = config
+                .database_url
+                .clone()
+                .unwrap_or_else(|| pool.connection_string().to_string());
+            if !url.is_empty() && handles.live.enabled {
+                Some(spawn_fanout_task(
+                    url,
+                    Arc::clone(&handles.hub),
+                    Arc::clone(&handles.live),
+                    pool.clone(),
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     loop {
         tokio::select! {
             biased;
@@ -199,6 +251,9 @@ where
                 });
             }
         }
+    }
+    if let Some(j) = fanout_join {
+        j.abort();
     }
     handles.hub.begin_shutdown();
     let _ = handles.hub.wait_drained(config.drain_timeout).await;
@@ -248,6 +303,7 @@ async fn handle_stream<S, R>(
     views: &ViewBundle,
     hub: &Arc<SseHub>,
     metrics: &Metrics,
+    live: &Arc<LiveBridge>,
 ) -> ServerResult<()>
 where
     S: SessionStore,
@@ -313,6 +369,7 @@ where
             None,
             Some(hub.as_ref()),
             Some(metrics),
+            Some(live.as_ref()),
         )
         .await?;
     write_http_response(&mut stream, &http_resp).await
@@ -717,7 +774,7 @@ where
     S: SessionStore,
     R: ActionRunner,
 {
-    dispatch_http_counted(http_req, rpc, exec, views, hub, None).await
+    dispatch_http_counted(http_req, rpc, exec, views, hub, None, None).await
 }
 
 async fn dispatch_http_counted<S, R>(
@@ -727,6 +784,7 @@ async fn dispatch_http_counted<S, R>(
     views: Option<&ViewBundle>,
     hub: Option<&SseHub>,
     metrics: Option<&Metrics>,
+    live: Option<&LiveBridge>,
 ) -> ServerResult<HttpResponse>
 where
     S: SessionStore,
@@ -765,7 +823,7 @@ where
             .map_err(|e| ServerError::BadRequest(format!("invalid JSON: {e}")))?
     };
 
-    let mut rpc_req = RpcRequest::new(target.clone(), body);
+    let mut rpc_req = RpcRequest::new(target.clone(), body.clone());
     for (k, v) in &http_req.headers {
         rpc_req.headers.insert(k.clone(), v.clone());
     }
@@ -791,6 +849,9 @@ where
         if let (Some(hub), Some(data)) = (hub, rpc_resp.data.as_ref()) {
             if let Some(event) = event_from_rpc(&target, data) {
                 hub.publish(&event);
+                if let Some(bridge) = live {
+                    bridge.notify_after_local(exec, &event, &body).await;
+                }
             }
         }
     }
@@ -864,7 +925,7 @@ where
             .map_err(|e| ServerError::BadRequest(format!("invalid JSON: {e}")))?
     };
 
-    let mut rpc_req = RpcRequest::new(target.clone(), body);
+    let mut rpc_req = RpcRequest::new(target.clone(), body.clone());
     for (k, v) in &http_req.headers {
         rpc_req.headers.insert(k.clone(), v.clone());
     }
@@ -881,6 +942,10 @@ where
         if let Some(data) = rpc_resp.data.as_ref() {
             if let Some(event) = event_from_rpc(&target, data) {
                 handles.hub.publish(&event);
+                handles
+                    .live
+                    .notify_after_local(exec, &event, &body)
+                    .await;
             }
         }
     }

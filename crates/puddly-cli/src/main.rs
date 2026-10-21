@@ -23,7 +23,7 @@ use puddly_rpc::{
 };
 use puddly_server::{
     errors_from_check, resolve_serve_env, serve, serve_dev, watch_dev_loop, DeployEnv,
-    DevHandles, DevState, ServerConfig,
+    DevHandles, DevState, LiveBridge, ServerConfig,
 };
 use puddly_views::ViewBundle;
 use std::path::PathBuf;
@@ -504,10 +504,12 @@ async fn main() -> ExitCode {
                 bind,
                 root: path,
                 secure_cookies: env.secure_cookies,
+                database_url: Some(env.database_url.clone()),
+                live_fanout: true,
                 ..ServerConfig::default()
             };
             eprintln!(
-                "{DISPLAY_NAME} serve: env={} (migrate apply is explicit; /health /ready /metrics /events)",
+                "{DISPLAY_NAME} serve: env={} (migrate apply is explicit; /health /ready /metrics /events; LISTEN puddly_live)",
                 env.deploy
             );
             match serve(&config, Arc::new(Mutex::new(rpc)), pool, views).await {
@@ -585,11 +587,14 @@ async fn main() -> ExitCode {
                 (None, None)
             };
 
-            let handles = Arc::new(DevHandles::new(views, state, rpc));
+            let live = LiveBridge::shared(pool.is_some());
+            let handles = Arc::new(DevHandles::new(views, state, rpc).with_live(Arc::clone(&live)));
             let config = ServerConfig {
                 bind: bind.clone(),
                 root: path.clone(),
                 secure_cookies,
+                database_url: pool.as_ref().map(|p| p.connection_string().to_string()),
+                live_fanout: pool.is_some(),
                 ..ServerConfig::default()
             };
 

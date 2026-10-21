@@ -140,6 +140,8 @@ pub struct DevHandles<S: SessionStore = MemorySessionStore, R: ActionRunner = St
     pub rpc: Option<Mutex<RpcServer<S, R>>>,
     /// In-process SSE hub (`GET /events`).
     pub hub: Arc<crate::sse::SseHub>,
+    /// LISTEN/NOTIFY bridge (enabled when serve_dev starts with a pool).
+    pub live: Arc<crate::live_fanout::LiveBridge>,
 }
 
 impl<S: SessionStore, R: ActionRunner> DevHandles<S, R> {
@@ -149,11 +151,17 @@ impl<S: SessionStore, R: ActionRunner> DevHandles<S, R> {
             state: RwLock::new(state),
             rpc: rpc.map(Mutex::new),
             hub: crate::sse::SseHub::shared(),
+            live: crate::live_fanout::LiveBridge::shared(false),
         }
     }
 
     pub fn with_hub(mut self, hub: Arc<crate::sse::SseHub>) -> Self {
         self.hub = hub;
+        self
+    }
+
+    pub fn with_live(mut self, live: Arc<crate::live_fanout::LiveBridge>) -> Self {
+        self.live = live;
         self
     }
 }

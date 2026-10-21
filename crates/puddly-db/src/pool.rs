@@ -11,6 +11,8 @@ use tokio_postgres::NoTls;
 #[derive(Clone)]
 pub struct PgPool {
     inner: Pool,
+    /// Original URL — used for dedicated LISTEN connections (Step 25).
+    connection_string: String,
 }
 
 impl PgPool {
@@ -32,7 +34,15 @@ impl PgPool {
         // Touch the pool so misconfigured URLs fail early when possible.
         // A failed first checkout still leaves a usable pool for retries.
         let _ = pool.get().await;
-        Ok(Self { inner: pool })
+        Ok(Self {
+            inner: pool,
+            connection_string: config.connection_string.clone(),
+        })
+    }
+
+    /// Connection string used to build this pool (LISTEN / diagnostics).
+    pub fn connection_string(&self) -> &str {
+        &self.connection_string
     }
 
     pub async fn from_url(url: &str) -> DbResult<Self> {
