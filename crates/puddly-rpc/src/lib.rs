@@ -6,6 +6,7 @@
 //! - Built-in `auth.login` / `auth.register` / `auth.logout`
 //! - Custom actions via loaded catalog + pluggable [`ActionRunner`]
 //! - Async dispatch (ADR-028)
+//! - Opt-in REST + OpenAPI (ADR-045 / Step 27)
 
 mod access_gate;
 mod auth_ops;
@@ -15,7 +16,9 @@ mod csrf;
 mod dispatch;
 mod error;
 mod list_body;
+mod openapi;
 mod request;
+mod rest;
 mod row_decode;
 mod rs_rows;
 mod ts_client;
@@ -25,7 +28,9 @@ pub use context::RpcContext;
 pub use csrf::check_csrf;
 pub use dispatch::RpcRuntime;
 pub use error::{RpcError, RpcResult};
+pub use openapi::{generate_openapi, write_openapi, GENERATED_OPENAPI_JSON};
 pub use request::{RpcErrorBody, RpcRequest, RpcResponse, RpcTarget};
+pub use rest::{looks_like_uuid, map_rest_to_rpc, RestMapping, REST_API_PREFIX};
 pub use row_decode::{
     decode_row_to_json, decode_rows_to_json_vec, row_to_json_raw, RowDecodeError,
 };

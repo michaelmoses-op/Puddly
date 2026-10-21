@@ -280,6 +280,7 @@ pub fn spawn_fanout_task(
 }
 
 /// Test helper: drive fan-out from an in-memory payload channel (no Postgres).
+#[allow(dead_code)]
 pub async fn drain_mem_notify(
     hub: &SseHub,
     bridge: &LiveBridge,

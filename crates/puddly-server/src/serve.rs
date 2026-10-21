@@ -15,7 +15,9 @@ use puddly_actions::ActionRunner;
 use puddly_auth::SessionStore;
 use puddly_core::{CSRF_HEADER_NAME, DISPLAY_NAME};
 use puddly_db::{Executor, PgPool};
-use puddly_rpc::{RpcRequest, RpcResponse, RpcServer};
+use puddly_rpc::{
+    generate_openapi, map_rest_to_rpc, RpcRequest, RpcResponse, RpcServer, REST_API_PREFIX,
+};
 use puddly_views::{render_page, ViewBundle, ISLANDS_RUNTIME_JS};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -40,6 +42,8 @@ pub struct ServerConfig {
     pub database_url: Option<String>,
     /// Opt out of LISTEN even when a database URL is available.
     pub live_fanout: bool,
+    /// Opt-in REST + OpenAPI beside primary RPC (ADR-008 / ADR-045 / Step 27).
+    pub rest: bool,
 }
 
 impl Default for ServerConfig {
@@ -51,6 +55,7 @@ impl Default for ServerConfig {
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             database_url: None,
             live_fanout: true,
+            rest: false,
         }
     }
 }
@@ -139,9 +144,12 @@ where
                 let hub = Arc::clone(&hub);
                 let metrics = Arc::clone(&metrics);
                 let live = Arc::clone(&live);
+                let rest = config.rest;
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        handle_stream(stream, &rpc, &pool, &views, &hub, &metrics, &live).await
+                    if let Err(e) = handle_stream(
+                        stream, &rpc, &pool, &views, &hub, &metrics, &live, rest,
+                    )
+                    .await
                     {
                         eprintln!("request error: {e}");
                     }
@@ -304,6 +312,7 @@ async fn handle_stream<S, R>(
     hub: &Arc<SseHub>,
     metrics: &Metrics,
     live: &Arc<LiveBridge>,
+    rest: bool,
 ) -> ServerResult<()>
 where
     S: SessionStore,
@@ -324,6 +333,15 @@ where
     if is_metrics_path(&http_req) {
         let body = metrics.snapshot(Some(hub.as_ref()), Some(pool));
         let resp = HttpResponse::json(200, "OK", &body);
+        return write_http_response(&mut stream, &resp).await;
+    }
+
+    if rest && is_openapi_path(&http_req) {
+        let doc = {
+            let rpc = rpc.lock().await;
+            generate_openapi(&rpc.ir)
+        };
+        let resp = HttpResponse::json(200, "OK", &doc);
         return write_http_response(&mut stream, &resp).await;
     }
 
@@ -370,6 +388,7 @@ where
             Some(hub.as_ref()),
             Some(metrics),
             Some(live.as_ref()),
+            rest,
         )
         .await?;
     write_http_response(&mut stream, &http_resp).await
@@ -774,7 +793,22 @@ where
     S: SessionStore,
     R: ActionRunner,
 {
-    dispatch_http_counted(http_req, rpc, exec, views, hub, None, None).await
+    dispatch_http_counted(http_req, rpc, exec, views, hub, None, None, false).await
+}
+
+/// Like [`dispatch_http`] with opt-in REST mapping enabled.
+pub async fn dispatch_http_rest<S, R>(
+    http_req: &HttpRequest,
+    rpc: &Mutex<RpcServer<S, R>>,
+    exec: &mut dyn Executor,
+    views: Option<&ViewBundle>,
+    hub: Option<&SseHub>,
+) -> ServerResult<HttpResponse>
+where
+    S: SessionStore,
+    R: ActionRunner,
+{
+    dispatch_http_counted(http_req, rpc, exec, views, hub, None, None, true).await
 }
 
 async fn dispatch_http_counted<S, R>(
@@ -785,6 +819,7 @@ async fn dispatch_http_counted<S, R>(
     hub: Option<&SseHub>,
     metrics: Option<&Metrics>,
     live: Option<&LiveBridge>,
+    rest: bool,
 ) -> ServerResult<HttpResponse>
 where
     S: SessionStore,
@@ -794,33 +829,69 @@ where
         return Ok(resp);
     }
 
+    if rest && is_openapi_path(http_req) {
+        let doc = {
+            let rpc = rpc.lock().await;
+            generate_openapi(&rpc.ir)
+        };
+        return Ok(HttpResponse::json(200, "OK", &doc));
+    }
+
     if let Some(view_name) = view_route_name(http_req, views) {
         let bundle = views.expect("view_route_name implies views");
         return render_view_response(bundle, &view_name, http_req, false, Some(rpc), Some(exec))
             .await;
     }
 
-    if http_req.method.eq_ignore_ascii_case("GET") {
-        return Ok(HttpResponse::text(404, "Not Found", "not found"));
-    }
-
-    if !http_req.method.eq_ignore_ascii_case("POST") {
-        return Ok(HttpResponse::text(405, "Method Not Allowed", "POST only for RPC"));
-    }
-
     let path = http_req.path.split('?').next().unwrap_or(&http_req.path);
-    let target = extract_rpc_target(path).ok_or_else(|| {
-        ServerError::BadRequest(format!(
-            "expected path /rpc/<resource>.<operation>, got {}",
-            http_req.path
-        ))
-    })?;
-
     let body: Value = if http_req.body.is_empty() {
         json!({})
     } else {
         serde_json::from_slice(&http_req.body)
             .map_err(|e| ServerError::BadRequest(format!("invalid JSON: {e}")))?
+    };
+
+    let (target, body) = if rest {
+        if let Some(mapped) = map_rest_to_rpc(&http_req.method, path, body.clone()) {
+            (mapped.target, mapped.body)
+        } else if let Some(t) = extract_rpc_target(path) {
+            if !http_req.method.eq_ignore_ascii_case("POST") {
+                return Ok(HttpResponse::text(
+                    405,
+                    "Method Not Allowed",
+                    "POST only for RPC",
+                ));
+            }
+            (t, body)
+        } else if path.starts_with(REST_API_PREFIX) || path.starts_with(&format!("{REST_API_PREFIX}/")) {
+            return Ok(HttpResponse::text(404, "Not Found", "unknown REST route"));
+        } else if http_req.method.eq_ignore_ascii_case("GET") {
+            return Ok(HttpResponse::text(404, "Not Found", "not found"));
+        } else {
+            return Ok(HttpResponse::text(
+                405,
+                "Method Not Allowed",
+                "POST /rpc/... or REST /api/...",
+            ));
+        }
+    } else {
+        if http_req.method.eq_ignore_ascii_case("GET") {
+            return Ok(HttpResponse::text(404, "Not Found", "not found"));
+        }
+        if !http_req.method.eq_ignore_ascii_case("POST") {
+            return Ok(HttpResponse::text(
+                405,
+                "Method Not Allowed",
+                "POST only for RPC",
+            ));
+        }
+        let target = extract_rpc_target(path).ok_or_else(|| {
+            ServerError::BadRequest(format!(
+                "expected path /rpc/<resource>.<operation>, got {}",
+                http_req.path
+            ))
+        })?;
+        (target, body)
     };
 
     let mut rpc_req = RpcRequest::new(target.clone(), body.clone());
@@ -1026,6 +1097,14 @@ fn extract_rpc_target(path: &str) -> Option<String> {
         return None;
     }
     Some(rest.to_string())
+}
+
+fn is_openapi_path(req: &HttpRequest) -> bool {
+    if !req.method.eq_ignore_ascii_case("GET") {
+        return false;
+    }
+    let path = req.path.split('?').next().unwrap_or(&req.path);
+    path == "/openapi.json" || path == "/api/openapi.json"
 }
 
 fn rpc_to_http(resp: RpcResponse) -> HttpResponse {

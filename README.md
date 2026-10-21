@@ -7,8 +7,8 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 26** — soft-plug IR row decode into CRUD list/get/include (ADR-044).
-Prior: Step 25 LISTEN/NOTIFY SSE fan-out (ADR-043).
+**Build plan Step 27** — opt-in REST `/api/*` + OpenAPI (ADR-045); `puddly serve --rest`.
+Prior: Step 26 IR row decode in CRUD (ADR-044).
 
 ## Try the todo slice
 
