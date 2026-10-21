@@ -42,6 +42,7 @@ fn get_islands_runtime_js() {
     assert!(body.contains("data-puddly-island"));
     // Step 16: mutation helper ships in the same runtime.
     assert!(body.contains("X-Puddly-CSRF"));
+    assert!(body.contains("puddly_csrf"));
     assert!(body.contains("credentials"));
 }
 

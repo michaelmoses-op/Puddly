@@ -20,6 +20,10 @@ pub const MIGRATIONS_DIR: &str = "migrations";
 /// Default session cookie name for server-side sessions.
 pub const SESSION_COOKIE_NAME: &str = "puddly_session";
 
-/// CSRF custom header required on mutating RPC calls (ADR-008 / Step 6).
-/// Presence of a non-empty value is enough for the header-check defense.
+/// Double-submit CSRF cookie (ADR-048 / Step 30). Not HttpOnly so JS can mirror it
+/// into [`CSRF_HEADER_NAME`]. SameSite/Secure parity with the session cookie.
+pub const CSRF_COOKIE_NAME: &str = "puddly_csrf";
+
+/// CSRF custom header required on mutating RPC calls (ADR-008 / ADR-048).
+/// Value must equal the [`CSRF_COOKIE_NAME`] cookie (double-submit).
 pub const CSRF_HEADER_NAME: &str = "x-puddly-csrf";

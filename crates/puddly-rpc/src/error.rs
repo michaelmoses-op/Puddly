@@ -15,7 +15,7 @@ pub enum RpcError {
     Unauthorized,
     #[error("forbidden")]
     Forbidden,
-    #[error("csrf token missing or empty (send header `{0}`)")]
+    #[error("{0}")]
     Csrf(String),
     #[error("bad request: {0}")]
     BadRequest(String),

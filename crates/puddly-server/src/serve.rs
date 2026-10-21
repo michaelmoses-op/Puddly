@@ -12,7 +12,9 @@ use crate::view_load::{
     resolve_load, resolve_static_load, unauthorized_html, unavailable_html, LoadOutcome,
 };
 use puddly_actions::ActionRunner;
-use puddly_auth::SessionStore;
+use puddly_auth::{
+    csrf_cookie_header, generate_session_token, parse_csrf_cookie, SessionStore, SESSION_TTL_SECS,
+};
 use puddly_core::{CSRF_HEADER_NAME, DISPLAY_NAME};
 use puddly_db::{Executor, PgPool};
 use puddly_rpc::{
@@ -1064,28 +1066,55 @@ where
         }
     };
 
-    match outcome {
+    let secure = match rpc {
+        Some(m) => m.lock().await.secure_cookies,
+        None => false,
+    };
+
+    let mut resp = match outcome {
         LoadOutcome::Props(props) => match render_page(bundle, name, &props) {
-            Ok(html) => Ok(HttpResponse::html(200, "OK", maybe_overlay(html))),
-            Err(puddly_views::ViewError::UnknownView { name }) => Ok(HttpResponse::text(
-                404,
-                "Not Found",
-                format!("unknown view `{name}`"),
-            )),
-            Err(e) => Err(ServerError::msg(e.to_string())),
+            Ok(html) => HttpResponse::html(200, "OK", maybe_overlay(html)),
+            Err(puddly_views::ViewError::UnknownView { name }) => {
+                return Ok(HttpResponse::text(
+                    404,
+                    "Not Found",
+                    format!("unknown view `{name}`"),
+                ))
+            }
+            Err(e) => return Err(ServerError::msg(e.to_string())),
         },
-        LoadOutcome::Unauthorized => Ok(HttpResponse::html(
+        LoadOutcome::Unauthorized => HttpResponse::html(
             401,
             "Unauthorized",
             maybe_overlay(unauthorized_html()),
-        )),
-        LoadOutcome::Unavailable(msg) => Ok(HttpResponse::html(
+        ),
+        LoadOutcome::Unavailable(msg) => HttpResponse::html(
             503,
             "Service Unavailable",
             maybe_overlay(unavailable_html(&msg)),
-        )),
-        LoadOutcome::BadRequest(msg) => Ok(HttpResponse::text(400, "Bad Request", msg)),
-        LoadOutcome::Error(msg) => Err(ServerError::msg(msg)),
+        ),
+        LoadOutcome::BadRequest(msg) => {
+            return Ok(HttpResponse::text(400, "Bad Request", msg))
+        }
+        LoadOutcome::Error(msg) => return Err(ServerError::msg(msg)),
+    };
+    // ADR-048: mint CSRF cookie on HTML so login/register can double-submit.
+    ensure_csrf_cookie(&mut resp, cookie, secure);
+    Ok(resp)
+}
+
+/// If the request has no `puddly_csrf` cookie, attach one (SameSite/Secure parity).
+fn ensure_csrf_cookie(resp: &mut HttpResponse, cookie_header: Option<&str>, secure: bool) {
+    let has = cookie_header
+        .and_then(parse_csrf_cookie)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    if !has {
+        resp.set_cookies.push(csrf_cookie_header(
+            &generate_session_token(),
+            SESSION_TTL_SECS,
+            secure,
+        ));
     }
 }
 

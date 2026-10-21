@@ -15,8 +15,31 @@
 
   /** Must match `puddly_core::CSRF_HEADER_NAME` (HTTP header names are case-insensitive). */
   var CSRF_HEADER = "X-Puddly-CSRF";
+  /** Must match `puddly_core::CSRF_COOKIE_NAME` (double-submit; not HttpOnly). */
+  var CSRF_COOKIE = "puddly_csrf";
 
   var liveSource = null;
+
+  function readCookie(name) {
+    if (typeof document === "undefined" || !document.cookie) return "";
+    var parts = document.cookie.split(";");
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i].trim();
+      if (p.indexOf(name + "=") === 0) {
+        try {
+          return decodeURIComponent(p.slice(name.length + 1));
+        } catch (_) {
+          return p.slice(name.length + 1);
+        }
+      }
+    }
+    return "";
+  }
+
+  /** Double-submit: mirror `puddly_csrf` cookie into `X-Puddly-CSRF`. */
+  function csrfHeaderValue() {
+    return readCookie(CSRF_COOKIE);
+  }
 
   function parseProps(el) {
     var raw = el.getAttribute("data-puddly-props") || "{}";
@@ -167,12 +190,13 @@
   function rpc(operation, body) {
     var op = String(operation || "").replace(/^\//, "");
     if (op.indexOf("rpc/") === 0) op = op.slice(4);
+    var headers = {
+      "Content-Type": "application/json",
+    };
+    headers[CSRF_HEADER] = csrfHeaderValue();
     return fetch("/rpc/" + op, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Puddly-CSRF": "1",
-      },
+      headers: headers,
       credentials: "include",
       body: JSON.stringify(body == null ? {} : body),
     }).then(
@@ -415,6 +439,8 @@
     rpc: rpc,
     bindRpcActions: bindRpcActions,
     CSRF_HEADER: CSRF_HEADER,
+    CSRF_COOKIE: CSRF_COOKIE,
+    csrfHeaderValue: csrfHeaderValue,
   };
 
   global.puddlyIslands = api;

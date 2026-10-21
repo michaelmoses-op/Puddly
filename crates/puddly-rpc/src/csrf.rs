@@ -1,17 +1,46 @@
 use crate::error::{RpcError, RpcResult};
 use crate::request::{RpcRequest, RpcTarget};
-use puddly_core::CSRF_HEADER_NAME;
+use puddly_auth::parse_csrf_cookie;
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME};
 
-/// Mutations must send a non-empty `X-Puddly-CSRF` header (Step 5 rec 3B).
+/// Mutations require double-submit CSRF (ADR-048): header `X-Puddly-CSRF` must
+/// equal cookie `puddly_csrf` (both non-empty). Safe methods (`list` / `get`) skip.
 pub fn check_csrf(req: &RpcRequest, target: &RpcTarget) -> RpcResult<()> {
     if !target.is_mutation() {
         return Ok(());
     }
-    let value = req.header(CSRF_HEADER_NAME).unwrap_or("");
-    if value.is_empty() {
-        return Err(RpcError::Csrf(CSRF_HEADER_NAME.to_string()));
+    let header = req.header(CSRF_HEADER_NAME).unwrap_or("");
+    if header.is_empty() {
+        return Err(RpcError::Csrf(format!(
+            "csrf header `{CSRF_HEADER_NAME}` missing or empty"
+        )));
+    }
+    let cookie = req
+        .cookie_header_value()
+        .and_then(parse_csrf_cookie)
+        .unwrap_or_default();
+    if cookie.is_empty() {
+        return Err(RpcError::Csrf(format!(
+            "csrf cookie `{CSRF_COOKIE_NAME}` missing"
+        )));
+    }
+    if !csrf_tokens_equal(header, &cookie) {
+        return Err(RpcError::Csrf(
+            "csrf header and cookie mismatch".to_string(),
+        ));
     }
     Ok(())
+}
+
+fn csrf_tokens_equal(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.as_bytes()
+        .iter()
+        .zip(b.as_bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 #[cfg(test)]
@@ -27,11 +56,22 @@ mod tests {
     }
 
     #[test]
-    fn create_requires_header() {
+    fn create_requires_matching_cookie_and_header() {
         let req = RpcRequest::new("todo.create", json!({}));
         let t = RpcTarget::parse("todo.create").unwrap();
         assert!(check_csrf(&req, &t).is_err());
-        let req = req.with_header(CSRF_HEADER_NAME, "1");
+
+        let req = req.with_header(CSRF_HEADER_NAME, "tok");
+        let err = check_csrf(&req, &t).unwrap_err();
+        assert!(err.to_string().contains("cookie"), "{err}");
+
+        let req = req.with_cookie(format!("{CSRF_COOKIE_NAME}=tok"));
         assert!(check_csrf(&req, &t).is_ok());
+
+        let bad = RpcRequest::new("todo.create", json!({}))
+            .with_header(CSRF_HEADER_NAME, "a")
+            .with_cookie(format!("{CSRF_COOKIE_NAME}=b"));
+        let err = check_csrf(&bad, &t).unwrap_err();
+        assert!(err.to_string().contains("mismatch"), "{err}");
     }
 }

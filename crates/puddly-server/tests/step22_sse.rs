@@ -2,7 +2,7 @@
 
 use puddly_auth::SessionStore;
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_db::RecordingExecutor;
 use puddly_rpc::RpcServer;
 use puddly_server::{
@@ -130,7 +130,10 @@ async fn mutation_publishes_via_dispatch() {
     let mut exec = RecordingExecutor::new();
 
     let mut headers = BTreeMap::new();
-    headers.insert("cookie".into(), format!("{SESSION_COOKIE_NAME}={token}"));
+    headers.insert(
+        "cookie".into(),
+        format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"),
+    );
     headers.insert(CSRF_HEADER_NAME.to_ascii_lowercase(), "1".into());
     let req = HttpRequest {
         method: "POST".into(),

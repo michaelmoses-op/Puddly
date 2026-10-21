@@ -40,7 +40,26 @@ pub fn generate_ts_client(ir: &AppIr) -> String {
     }
 
     out.push_str(
-        r#"function createRpc(opts: ClientOptions = {}) {
+        r#"const CSRF_HEADER = "X-Puddly-CSRF";
+const CSRF_COOKIE = "puddly_csrf";
+
+function readCookie(name: string): string {
+  if (typeof document === "undefined" || !document.cookie) return "";
+  const parts = document.cookie.split(";");
+  for (const part of parts) {
+    const p = part.trim();
+    if (p.startsWith(name + "=")) {
+      try {
+        return decodeURIComponent(p.slice(name.length + 1));
+      } catch {
+        return p.slice(name.length + 1);
+      }
+    }
+  }
+  return "";
+}
+
+function createRpc(opts: ClientOptions = {}) {
   const base = (opts.baseUrl ?? "").replace(/\/$/, "");
   const f = opts.fetch ?? fetch;
   return async function rpc<T = unknown>(
@@ -52,7 +71,7 @@ pub fn generate_ts_client(ir: &AppIr) -> String {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Puddly-CSRF": "1",
+          [CSRF_HEADER]: readCookie(CSRF_COOKIE),
         },
         credentials: "include",
         body: JSON.stringify(body ?? {}),

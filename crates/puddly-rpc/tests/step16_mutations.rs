@@ -4,7 +4,7 @@
 use puddly_actions::{catalog_from_app, NativeActionRunner};
 use puddly_auth::SessionStore;
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_data::statement_book_from_app;
 use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::{RpcRequest, RpcRuntime, RpcServer};
@@ -29,15 +29,24 @@ fn load_server() -> RpcServer {
     RpcServer::from_app(&root, result.ir.unwrap()).expect("load actions")
 }
 
-fn cookie_from_set(set_cookies: &[String]) -> String {
-    let raw = set_cookies
-        .first()
-        .expect("expected Set-Cookie")
-        .split(';')
-        .next()
-        .unwrap()
-        .trim();
-    raw.to_string()
+/// Cookie header + CSRF token from login/register Set-Cookie list.
+fn cookies_from_set(set_cookies: &[String]) -> (String, String) {
+    let mut parts = Vec::new();
+    let mut csrf = String::new();
+    for c in set_cookies {
+        let nv = c.split(';').next().unwrap().trim();
+        parts.push(nv.to_string());
+        if let Some(v) = nv.strip_prefix(&format!("{CSRF_COOKIE_NAME}=")) {
+            csrf = v.to_string();
+        }
+    }
+    assert!(!csrf.is_empty(), "expected puddly_csrf in {set_cookies:?}");
+    (parts.join("; "), csrf)
+}
+
+fn bootstrap_csrf(req: RpcRequest) -> RpcRequest {
+    req.with_header(CSRF_HEADER_NAME, "bootstrap")
+        .with_cookie(format!("{CSRF_COOKIE_NAME}=bootstrap"))
 }
 
 #[tokio::test]
@@ -46,17 +55,16 @@ async fn mutation_without_csrf_fails() {
     let mut exec = RecordingExecutor::new();
     exec.push_canned(vec![]); // register email check
 
-    let reg = RpcRequest::new(
+    let reg = bootstrap_csrf(RpcRequest::new(
         "auth.register",
         json!({
             "email": "csrf@example.com",
             "password": "password123"
         }),
-    )
-    .with_header(CSRF_HEADER_NAME, "1");
+    ));
     let reg_resp = server.handle(&reg, &mut exec).await;
     assert!(reg_resp.ok, "{reg_resp:?}");
-    let cookie = cookie_from_set(&reg_resp.set_cookies);
+    let (cookie, _csrf) = cookies_from_set(&reg_resp.set_cookies);
 
     let create = RpcRequest::new(
         "todo.create",
@@ -95,18 +103,17 @@ async fn register_create_update_archive_loop() {
 
     // 1) Register → session cookie
     exec.push_canned(vec![]); // email not taken
-    let reg = RpcRequest::new(
+    let reg = bootstrap_csrf(RpcRequest::new(
         "auth.register",
         json!({
             "email": "mut@example.com",
             "password": "password123"
         }),
-    )
-    .with_header(CSRF_HEADER_NAME, "1");
+    ));
     let reg_resp = rt.handle(&reg, &mut exec).await;
     assert!(reg_resp.ok, "{reg_resp:?}");
-    let cookie = cookie_from_set(&reg_resp.set_cookies);
-    assert!(cookie.starts_with(&format!("{SESSION_COOKIE_NAME}=")));
+    let (cookie, csrf) = cookies_from_set(&reg_resp.set_cookies);
+    assert!(cookie.contains(&format!("{SESSION_COOKIE_NAME}=")));
     let user_id = reg_resp.data.as_ref().unwrap()["user"]["id"]
         .as_str()
         .unwrap()
@@ -120,7 +127,7 @@ async fn register_create_update_archive_loop() {
             "project": "00000000-0000-4000-8000-000000000001"
         }),
     )
-    .with_header(CSRF_HEADER_NAME, "1")
+    .with_header(CSRF_HEADER_NAME, csrf.as_str())
     .with_cookie(cookie.clone());
     let create_resp = rt.handle(&create, &mut exec).await;
     assert!(create_resp.ok, "{create_resp:?}");
@@ -164,7 +171,7 @@ async fn register_create_update_archive_loop() {
         "todo.update",
         json!({ "id": todo_id, "done": true }),
     )
-    .with_header(CSRF_HEADER_NAME, "1")
+    .with_header(CSRF_HEADER_NAME, csrf.as_str())
     .with_cookie(cookie.clone());
     let update_resp = rt.handle(&update, &mut exec).await;
     assert!(update_resp.ok, "{update_resp:?}");
@@ -195,7 +202,7 @@ async fn register_create_update_archive_loop() {
     exec.push_canned(vec![row]);
 
     let archive = RpcRequest::new("todo.archive", json!({ "id": todo_id }))
-        .with_header(CSRF_HEADER_NAME, "1")
+        .with_header(CSRF_HEADER_NAME, csrf.as_str())
         .with_cookie(cookie);
     let archive_resp = rt.handle(&archive, &mut exec).await;
     assert!(archive_resp.ok, "{archive_resp:?}");
@@ -214,6 +221,10 @@ fn islands_runtime_includes_csrf_and_credentials() {
     assert!(
         js.contains("X-Puddly-CSRF"),
         "client must send CSRF header name used by puddly-core"
+    );
+    assert!(
+        js.contains("puddly_csrf") && js.contains("readCookie"),
+        "client must mirror puddly_csrf cookie into the header"
     );
     assert!(
         js.contains("credentials: \"include\"") || js.contains("credentials:\"include\""),
@@ -243,8 +254,8 @@ async fn login_then_create_injects_owner() {
             "project": "00000000-0000-4000-8000-000000000001"
         }),
     )
-    .with_header(CSRF_HEADER_NAME, "1")
-    .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+    .with_header(CSRF_HEADER_NAME, "tok")
+    .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=tok"));
     let resp = server.handle(&create, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
 

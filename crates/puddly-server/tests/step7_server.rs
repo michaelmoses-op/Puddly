@@ -2,7 +2,7 @@
 
 use puddly_auth::SessionStore;
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_db::{RecordingExecutor, SqlValue};
 use puddly_rpc::RpcServer;
 use puddly_server::{dispatch_http, parse_http_request_bytes, HttpRequest};
@@ -112,7 +112,8 @@ async fn register_generates_user_id_when_omitted() {
             "password": "password123"
         }),
     )
-    .with_header(CSRF_HEADER_NAME, "1");
+    .with_header(CSRF_HEADER_NAME, "1")
+    .with_cookie(format!("{CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     let id = resp.data.as_ref().unwrap()["user"]["id"].as_str().unwrap();

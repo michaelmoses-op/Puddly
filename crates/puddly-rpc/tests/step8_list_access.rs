@@ -3,7 +3,7 @@
 use puddly_actions::{catalog_from_app, IpcActionRunner, IpcRequest, IpcResponse, IPC_PROTOCOL_VERSION};
 use puddly_auth::SessionStore;
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_data::statement_book_from_app;
 use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::{RpcRequest, RpcRuntime, RpcServer};
@@ -41,7 +41,7 @@ async fn list_ands_body_filter_with_owner_predicate() {
             "limit": 25
         }),
     )
-    .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+    .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
 
@@ -68,7 +68,7 @@ async fn action_access_forbids_non_owner() {
 
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1")
-        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "forbidden");
@@ -112,7 +112,7 @@ async fn ipc_protocol_stub_runner_frames_call() {
 
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1")
-        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = rt.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "action");

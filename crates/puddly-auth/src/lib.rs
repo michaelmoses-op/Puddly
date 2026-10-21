@@ -15,7 +15,8 @@ mod user;
 
 pub use access::{check_rule, check_rules, AccessDecision, RowValues};
 pub use cookie::{
-    clear_session_cookie_header, parse_cookie_header, parse_session_cookie, session_cookie_header,
+    clear_csrf_cookie_header, clear_session_cookie_header, csrf_cookie_header, parse_cookie_header,
+    parse_csrf_cookie, parse_session_cookie, session_cookie_header,
 };
 pub use error::{AuthError, AuthResult};
 pub use password::{hash_password, verify_password};
