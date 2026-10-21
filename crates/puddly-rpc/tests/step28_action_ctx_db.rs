@@ -3,7 +3,7 @@
 use puddly_actions::IpcActionRunner;
 use puddly_auth::SessionStore;
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_data::statement_book_from_app;
 use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::{RpcRequest, RpcRuntime};
@@ -70,7 +70,7 @@ async fn archive_action_loads_row_via_ctx_db_get() {
 
     let req = RpcRequest::new("todo.archive", json!({"id": "arch-1"}))
         .with_header(CSRF_HEADER_NAME, "1")
-        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = rt.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     let data = resp.data.unwrap();
@@ -119,7 +119,7 @@ async fn ctx_db_get_forbidden_for_other_owner() {
 
     let req = RpcRequest::new("todo.archive", json!({"id": "arch-1"}))
         .with_header(CSRF_HEADER_NAME, "1")
-        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = rt.handle(&req, &mut exec).await;
     assert!(!resp.ok, "expected action failure, got {resp:?}");
     let err = resp.error.as_ref().expect("error body");
@@ -156,7 +156,8 @@ async fn ctx_db_get_unauthorized_without_session() {
 
     // No cookie → enforce_action_access fails before sidecar (owner rule).
     let req = RpcRequest::new("todo.archive", json!({"id": "arch-1"}))
-        .with_header(CSRF_HEADER_NAME, "1");
+        .with_header(CSRF_HEADER_NAME, "1")
+        .with_cookie(format!("{CSRF_COOKIE_NAME}=1"));
     let resp = rt.handle(&req, &mut exec).await;
     assert!(!resp.ok, "{resp:?}");
     assert_eq!(resp.error.as_ref().unwrap().code, "unauthorized");

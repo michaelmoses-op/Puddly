@@ -47,7 +47,7 @@ Open the app:
 5. Open a second tab of `/` — toggle in one; the other updates without a manual refresh.
 6. Reload — remaining todos still load from Postgres. Empty list shows *No todos yet — add one above.*
 
-CSRF (`X-Puddly-CSRF`) and session cookies are sent automatically by `tools/puddly-islands.js` (`credentials: "include"`). You do not set them by hand in the browser UI. Live pages auto-open `EventSource('/events')`.
+CSRF double-submit (`puddly_csrf` cookie mirrored as `X-Puddly-CSRF`) and session cookies are sent automatically by `tools/puddly-islands.js` (`credentials: "include"`). You do not set them by hand in the browser UI. Live pages auto-open `EventSource('/events')`.
 
 ## Layout
 

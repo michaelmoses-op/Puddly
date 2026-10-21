@@ -40,14 +40,15 @@ Short rules for apps (and for AI). Details live in gitignored `docs/` ADRs.
 
 - Custom actions: `actions: { name: { input, run: "./file.action.ts", access? } }`.
 - Action `ctx`: `{ user, db }` — `ctx.db.get|list|create|update|delete(resource, input)` goes through host CRUD + access rules (no raw SQL).
-- RPC: `POST /rpc/<resource>.<op>` JSON body. Mutations need `X-Puddly-CSRF` + session cookie.
+- RPC: `POST /rpc/<resource>.<op>` JSON body. Mutations need double-submit CSRF (`puddly_csrf` cookie === `X-Puddly-CSRF` header) + session cookie.
 - Islands: `data-puddly-rpc` / forms, or generated `api.<resource>.<op>()` client.
 
 ## Auth
 
 - Built-in `auth.register` / `auth.login` / `auth.logout`.
 - Opt-in DDL: `puddly auth scaffold` then migrate apply.
-- Session cookie: `puddly_session` (Lax; Secure in prod).
+- Session cookie: `puddly_session` (HttpOnly; Lax; Secure in prod).
+- CSRF cookie: `puddly_csrf` (readable by JS; Lax; Secure parity with session; set on login/register and HTML when absent).
 
 ## Migrate & check
 

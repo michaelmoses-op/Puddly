@@ -76,7 +76,7 @@ pub fn generate_openapi(ir: &AppIr) -> Value {
         "info": {
             "title": format!("{DISPLAY_NAME} REST API"),
             "version": "0.1.0",
-            "description": "Opt-in REST surface beside primary RPC (POST /rpc/<resource>.<operation>). Mutations require header X-Puddly-CSRF; session cookie puddly_session."
+            "description": "Opt-in REST surface beside primary RPC (POST /rpc/<resource>.<operation>). Mutations require double-submit CSRF: header X-Puddly-CSRF must equal cookie puddly_csrf; session cookie puddly_session."
         },
         "paths": Value::Object(paths),
         "components": {
@@ -87,7 +87,7 @@ pub fn generate_openapi(ir: &AppIr) -> Value {
                     "in": "header",
                     "required": true,
                     "schema": { "type": "string" },
-                    "description": "Presence CSRF header (any non-empty value)"
+                    "description": "Double-submit CSRF: must equal the puddly_csrf cookie value"
                 }
             },
             "securitySchemes": {
@@ -95,6 +95,11 @@ pub fn generate_openapi(ir: &AppIr) -> Value {
                     "type": "apiKey",
                     "in": "cookie",
                     "name": "puddly_session"
+                },
+                "csrfCookie": {
+                    "type": "apiKey",
+                    "in": "cookie",
+                    "name": "puddly_csrf"
                 }
             }
         }

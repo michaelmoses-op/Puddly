@@ -3,7 +3,7 @@
 use puddly_actions::{catalog_from_app, NativeActionRunner};
 use puddly_auth::{hash_password, MemorySessionStore, SessionStore};
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_data::statement_book_from_app;
 use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::{RpcRequest, RpcRuntime, RpcServer};
@@ -53,6 +53,17 @@ async fn csrf_required_on_create_not_list() {
     let resp = server.handle(&create, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "csrf");
+
+    let mismatch = RpcRequest::new("todo.create", json!({"title": "x"}))
+        .with_header(CSRF_HEADER_NAME, "a")
+        .with_cookie(format!("{CSRF_COOKIE_NAME}=b"));
+    let resp = server.handle(&mismatch, &mut exec).await;
+    assert!(!resp.ok);
+    assert_eq!(resp.error.as_ref().unwrap().code, "csrf");
+    assert!(
+        resp.error.as_ref().unwrap().message.contains("mismatch"),
+        "{resp:?}"
+    );
 }
 
 #[tokio::test]
@@ -60,7 +71,8 @@ async fn create_enforces_authenticated() {
     let mut server = load_server();
     let mut exec = RecordingExecutor::new();
     let req = RpcRequest::new("todo.create", json!({"title": "hi"}))
-        .with_header(CSRF_HEADER_NAME, "1");
+        .with_header(CSRF_HEADER_NAME, "1")
+        .with_cookie(format!("{CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "unauthorized");
@@ -120,7 +132,8 @@ async fn custom_action_requires_auth_and_runner() {
     let mut exec = RecordingExecutor::new();
 
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
-        .with_header(CSRF_HEADER_NAME, "1");
+        .with_header(CSRF_HEADER_NAME, "1")
+        .with_cookie(format!("{CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     assert_eq!(resp.error.as_ref().unwrap().code, "unauthorized");
 
@@ -133,7 +146,7 @@ async fn custom_action_requires_auth_and_runner() {
     exec.push_canned(vec![row]);
     let req = RpcRequest::new("todo.archive", json!({"id": "t1"}))
         .with_header(CSRF_HEADER_NAME, "1")
-        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     // Stub runner → action error
     assert!(!resp.ok);
@@ -170,7 +183,7 @@ async fn native_action_runner_executes_archive() {
     exec.push_canned(vec![row]);
     let req = RpcRequest::new("todo.archive", json!({"id": "abc"}))
         .with_header(CSRF_HEADER_NAME, "1")
-        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = rt.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     assert_eq!(resp.data.unwrap()["archived"], "abc");
@@ -193,11 +206,13 @@ async fn auth_login_sets_cookie() {
         "auth.login",
         json!({"email": "a@b.co", "password": "password123"}),
     )
-    .with_header(CSRF_HEADER_NAME, "1");
+    .with_header(CSRF_HEADER_NAME, "1")
+    .with_cookie(format!("{CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     assert!(!resp.set_cookies.is_empty());
-    assert!(resp.set_cookies[0].contains(SESSION_COOKIE_NAME));
+    assert!(resp.set_cookies.iter().any(|c| c.contains(SESSION_COOKIE_NAME)));
+    assert!(resp.set_cookies.iter().any(|c| c.contains(CSRF_COOKIE_NAME)));
     assert_eq!(resp.data.as_ref().unwrap()["user"]["id"], "u1");
 }
 

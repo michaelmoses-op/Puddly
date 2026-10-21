@@ -30,6 +30,7 @@ fn generate_for_todo_slice_contains_todo_list_and_auth_login() {
     assert!(src.contains("api.todo") || src.contains("todo: {"), "missing todo namespace");
     assert!(src.contains("credentials: \"include\""), "must send cookies");
     assert!(src.contains("X-Puddly-CSRF"), "must send CSRF header");
+    assert!(src.contains("puddly_csrf"), "must read double-submit cookie");
     assert!(src.contains("TodoFields"), "field type from IR");
     assert!(src.contains("archive:"), "custom action method");
 }

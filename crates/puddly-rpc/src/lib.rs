@@ -1,6 +1,6 @@
 //! RPC skeleton: `POST /rpc/<resource>.<operation>` (ADR-008).
 //!
-//! - CSRF custom-header check on mutations
+//! - CSRF double-submit (cookie `puddly_csrf` === header `X-Puddly-CSRF`) on mutations
 //! - Auth resolver → [`RpcContext`]
 //! - Access-rule enforcement on list/get/create/update/delete
 //! - Built-in `auth.login` / `auth.register` / `auth.logout`

@@ -3,8 +3,9 @@
 use crate::error::{RpcError, RpcResult};
 use crate::request::RpcResponse;
 use puddly_auth::{
-    clear_session_cookie_header, generate_user_id, session_cookie_header, AuthProvider, AuthUser,
-    EmailPasswordProvider, RegisterInput, SessionStore, SESSION_TTL_SECS,
+    clear_csrf_cookie_header, clear_session_cookie_header, csrf_cookie_header, generate_session_token,
+    generate_user_id, session_cookie_header, AuthProvider, AuthUser, EmailPasswordProvider,
+    RegisterInput, SessionStore, SESSION_TTL_SECS,
 };
 use puddly_db::Executor;
 use serde_json::{json, Value};
@@ -101,11 +102,15 @@ async fn logout<S: SessionStore>(
     }
     Ok(RpcResponse::ok_with_cookies(
         json!({ "loggedOut": true }),
-        vec![clear_session_cookie_header(secure_cookie)],
+        vec![
+            clear_session_cookie_header(secure_cookie),
+            clear_csrf_cookie_header(secure_cookie),
+        ],
     ))
 }
 
 fn session_response(user: &AuthUser, token: &str, secure_cookie: bool) -> RpcResponse {
+    let csrf = generate_session_token();
     RpcResponse::ok_with_cookies(
         json!({
             "user": {
@@ -114,6 +119,9 @@ fn session_response(user: &AuthUser, token: &str, secure_cookie: bool) -> RpcRes
                 "roles": user.roles,
             }
         }),
-        vec![session_cookie_header(token, SESSION_TTL_SECS, secure_cookie)],
+        vec![
+            session_cookie_header(token, SESSION_TTL_SECS, secure_cookie),
+            csrf_cookie_header(&csrf, SESSION_TTL_SECS, secure_cookie),
+        ],
     )
 }

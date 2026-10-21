@@ -3,7 +3,7 @@
 
 use puddly_actions::{catalog_from_app, NativeActionRunner};
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_data::statement_book_from_app;
 use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::{RpcRequest, RpcRuntime};
@@ -21,15 +21,18 @@ fn todo_slice() -> PathBuf {
     workspace_root().join("examples/todo-slice")
 }
 
-fn cookie_from_set(set_cookies: &[String]) -> String {
-    let raw = set_cookies
-        .first()
-        .expect("expected Set-Cookie")
-        .split(';')
-        .next()
-        .unwrap()
-        .trim();
-    raw.to_string()
+fn cookies_from_set(set_cookies: &[String]) -> (String, String) {
+    let mut parts = Vec::new();
+    let mut csrf = String::new();
+    for c in set_cookies {
+        let nv = c.split(';').next().unwrap().trim();
+        parts.push(nv.to_string());
+        if let Some(v) = nv.strip_prefix(&format!("{CSRF_COOKIE_NAME}=")) {
+            csrf = v.to_string();
+        }
+    }
+    assert!(!csrf.is_empty(), "expected puddly_csrf in {set_cookies:?}");
+    (parts.join("; "), csrf)
 }
 
 #[tokio::test]
@@ -63,11 +66,12 @@ async fn register_create_list_update_archive_list() {
             "password": "password123"
         }),
     )
-    .with_header(CSRF_HEADER_NAME, "1");
+    .with_header(CSRF_HEADER_NAME, "bootstrap")
+    .with_cookie(format!("{CSRF_COOKIE_NAME}=bootstrap"));
     let reg_resp = rt.handle(&reg, &mut exec).await;
     assert!(reg_resp.ok, "{reg_resp:?}");
-    let cookie = cookie_from_set(&reg_resp.set_cookies);
-    assert!(cookie.starts_with(&format!("{SESSION_COOKIE_NAME}=")));
+    let (cookie, csrf) = cookies_from_set(&reg_resp.set_cookies);
+    assert!(cookie.contains(&format!("{SESSION_COOKIE_NAME}=")));
     let user_id = reg_resp.data.as_ref().unwrap()["user"]["id"]
         .as_str()
         .unwrap()
@@ -75,7 +79,7 @@ async fn register_create_list_update_archive_list() {
 
     // 2) Create todo without project — framework ensures a personal project
     let create = RpcRequest::new("todo.create", json!({ "title": "Ship Step 18" }))
-        .with_header(CSRF_HEADER_NAME, "1")
+        .with_header(CSRF_HEADER_NAME, csrf.as_str())
         .with_cookie(cookie.clone());
     // project lookup returns empty → insert personal project (execute, no canned)
     let create_resp = rt.handle(&create, &mut exec).await;
@@ -155,7 +159,7 @@ async fn register_create_list_update_archive_list() {
     exec.push_canned(vec![listed]);
 
     let list1 = RpcRequest::new("todo.list", json!({}))
-        .with_header(CSRF_HEADER_NAME, "1")
+        .with_header(CSRF_HEADER_NAME, csrf.as_str())
         .with_cookie(cookie.clone());
     let list1_resp = rt.handle(&list1, &mut exec).await;
     assert!(list1_resp.ok, "{list1_resp:?}");
@@ -181,7 +185,7 @@ async fn register_create_list_update_archive_list() {
     exec.push_canned(vec![row]);
 
     let update = RpcRequest::new("todo.update", json!({ "id": todo_id, "done": true }))
-        .with_header(CSRF_HEADER_NAME, "1")
+        .with_header(CSRF_HEADER_NAME, csrf.as_str())
         .with_cookie(cookie.clone());
     let update_resp = rt.handle(&update, &mut exec).await;
     assert!(update_resp.ok, "{update_resp:?}");
@@ -199,7 +203,7 @@ async fn register_create_list_update_archive_list() {
     exec.push_canned(vec![row]);
 
     let archive = RpcRequest::new("todo.archive", json!({ "id": todo_id }))
-        .with_header(CSRF_HEADER_NAME, "1")
+        .with_header(CSRF_HEADER_NAME, csrf.as_str())
         .with_cookie(cookie.clone());
     let archive_resp = rt.handle(&archive, &mut exec).await;
     assert!(archive_resp.ok, "{archive_resp:?}");
@@ -223,7 +227,7 @@ async fn register_create_list_update_archive_list() {
     // 6) List again — empty
     exec.push_canned(vec![]);
     let list2 = RpcRequest::new("todo.list", json!({}))
-        .with_header(CSRF_HEADER_NAME, "1")
+        .with_header(CSRF_HEADER_NAME, csrf.as_str())
         .with_cookie(cookie);
     let list2_resp = rt.handle(&list2, &mut exec).await;
     assert!(list2_resp.ok, "{list2_resp:?}");

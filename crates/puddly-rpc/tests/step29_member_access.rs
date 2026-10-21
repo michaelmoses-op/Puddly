@@ -2,7 +2,7 @@
 
 use puddly_auth::SessionStore;
 use puddly_check::check;
-use puddly_core::SESSION_COOKIE_NAME;
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::{RpcRequest, RpcServer};
 use serde_json::json;
@@ -173,8 +173,8 @@ async fn project_delete_still_owner_only() {
     exec.push_canned(vec![project]);
 
     let req = RpcRequest::new("project.delete", json!({ "id": "p1" }))
-        .with_header(puddly_core::CSRF_HEADER_NAME, "1")
-        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}"));
+        .with_header(CSRF_HEADER_NAME, "1")
+        .with_cookie(format!("{SESSION_COOKIE_NAME}={token}; {CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&req, &mut exec).await;
     assert!(!resp.ok);
     assert_eq!(resp.error.as_ref().unwrap().code, "forbidden");

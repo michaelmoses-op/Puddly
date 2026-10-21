@@ -2,7 +2,7 @@
 
 use puddly_auth::{hash_password, AuthUser, SessionStore};
 use puddly_check::check;
-use puddly_core::{CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use puddly_core::{CSRF_COOKIE_NAME, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
 use puddly_db::{DbRow, RecordingExecutor, SqlValue};
 use puddly_rpc::{RpcRequest, RpcServer};
 use puddly_server::{dispatch_http, try_dispatch_get_dev, DevHandles, DevState, HttpRequest};
@@ -86,6 +86,14 @@ async fn get_login_and_register_return_200_forms_without_db() {
             "{path} missing link {cross_link}:\n{body}"
         );
         assert!(body.contains("/puddly-islands.js"), "{path}:\n{body}");
+        assert!(
+            resp.set_cookies
+                .iter()
+                .any(|c| c.starts_with(&format!("{CSRF_COOKIE_NAME}="))
+                    || c.contains(&format!("{CSRF_COOKIE_NAME}="))),
+            "{path} should mint CSRF cookie for double-submit: {:?}",
+            resp.set_cookies
+        );
     }
 }
 
@@ -168,7 +176,8 @@ async fn register_then_login_rpc_still_works() {
             "userId": "user-17"
         }),
     )
-    .with_header(CSRF_HEADER_NAME, "1");
+    .with_header(CSRF_HEADER_NAME, "1")
+    .with_cookie(format!("{CSRF_COOKIE_NAME}=1"));
     let reg = server.handle(&register, &mut exec).await;
     assert!(reg.ok, "{reg:?}");
     assert!(!reg.set_cookies.is_empty(), "register sets session cookie");
@@ -185,7 +194,8 @@ async fn register_then_login_rpc_still_works() {
         "auth.login",
         json!({ "email": "step17@x.co", "password": "secret-17" }),
     )
-    .with_header(CSRF_HEADER_NAME, "1");
+    .with_header(CSRF_HEADER_NAME, "1")
+    .with_cookie(format!("{CSRF_COOKIE_NAME}=1"));
     let resp = server.handle(&login, &mut exec).await;
     assert!(resp.ok, "{resp:?}");
     assert!(!resp.set_cookies.is_empty());
