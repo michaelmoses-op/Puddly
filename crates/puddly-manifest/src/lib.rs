@@ -155,21 +155,38 @@ fn rule_to_manifest(rule: &RuleIr) -> ManifestRule {
             kind: "authenticated".into(),
             field: None,
             role: None,
+            via: None,
+            on: None,
+            user_field: None,
         },
         RuleIr::Owner { field, .. } => ManifestRule {
             kind: "owner".into(),
             field: Some(field.clone()),
             role: None,
+            via: None,
+            on: None,
+            user_field: None,
         },
         RuleIr::Role { role, .. } => ManifestRule {
             kind: "role".into(),
             field: None,
             role: Some(role.clone()),
+            via: None,
+            on: None,
+            user_field: None,
         },
-        RuleIr::Member { field, .. } => ManifestRule {
+        RuleIr::Member {
+            via,
+            on,
+            user_field,
+            ..
+        } => ManifestRule {
             kind: "member".into(),
-            field: Some(field.clone()),
+            field: None,
             role: None,
+            via: Some(via.clone()),
+            on: Some(on.clone()),
+            user_field: Some(user_field.clone()),
         },
     }
 }

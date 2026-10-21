@@ -16,11 +16,11 @@ expression: "serde_json::to_string_pretty(&slim).unwrap()"
         },
         {
           "name": "list",
-          "rule": "owner:owner"
+          "rule": "member:projectMember:project:user"
         },
         {
           "name": "update",
-          "rule": "owner:owner"
+          "rule": "member:projectMember:project:user"
         }
       ],
       "actions": [],
@@ -86,6 +86,93 @@ expression: "serde_json::to_string_pretty(&slim).unwrap()"
       ],
       "name": "project",
       "path": "<WORKSPACE>/examples/todo-slice/features/projects/project.resource.ts"
+    },
+    {
+      "access": [
+        {
+          "name": "create",
+          "rule": "authenticated"
+        },
+        {
+          "name": "delete",
+          "rule": "owner:user"
+        },
+        {
+          "name": "list",
+          "rule": "owner:user"
+        },
+        {
+          "name": "update",
+          "rule": "owner:user"
+        }
+      ],
+      "actions": [],
+      "constraints": [],
+      "export_name": "ProjectMember",
+      "fields": [
+        {
+          "kind": "id",
+          "name": "id",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": {
+            "ref": {
+              "target": "project"
+            }
+          },
+          "name": "project",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": {
+            "ref": {
+              "target": "user"
+            }
+          },
+          "name": "user",
+          "options": {
+            "auto": null,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": null
+          }
+        },
+        {
+          "kind": "timestamp",
+          "name": "createdAt",
+          "options": {
+            "auto": true,
+            "default": null,
+            "filterable": null,
+            "max": null,
+            "optional": null,
+            "renamedFrom": null,
+            "sortable": true
+          }
+        }
+      ],
+      "name": "projectMember",
+      "path": "<WORKSPACE>/examples/todo-slice/features/projects/projectMember.resource.ts"
     },
     {
       "access": [

@@ -67,6 +67,15 @@ struct Filter {
     value: SqlValue,
 }
 
+/// Access predicate: `"id" IN (SELECT on FROM via WHERE user = $n)` (ADR-047).
+#[derive(Debug, Clone)]
+struct MemberInSubquery {
+    via: String,
+    on: String,
+    user_field: String,
+    user_id: SqlValue,
+}
+
 #[derive(Debug, Clone)]
 struct Order {
     field: String,
@@ -85,6 +94,7 @@ pub struct QueryBuilder {
     /// Ref field name → target resource (for `include` validation / batching).
     ref_fields: std::collections::BTreeMap<String, String>,
     filters: Vec<Filter>,
+    member_in: Option<MemberInSubquery>,
     order: Vec<Order>,
     limit: Option<u32>,
     cursor: Option<SqlValue>,
@@ -129,6 +139,7 @@ impl QueryBuilder {
             known_fields: known,
             ref_fields,
             filters: Vec::new(),
+            member_in: None,
             order: Vec::new(),
             limit: None,
             cursor: None,
@@ -143,7 +154,7 @@ impl QueryBuilder {
     }
 
     /// Access-predicate equality that does **not** require `filterable: true`
-    /// (owner/member fields are often refs). Still must name a known column.
+    /// (owner fields are often refs). Still must name a known column.
     pub fn require_eq(mut self, field: &str, value: SqlValue) -> DataResult<Self> {
         if !self.known_fields.contains(field) {
             return Err(DataError::UnknownField(field.into()));
@@ -154,6 +165,24 @@ impl QueryBuilder {
             value,
         });
         Ok(self)
+    }
+
+    /// Access predicate for join-table `member` (ADR-047):
+    /// `"id" IN (SELECT "on" FROM "via" WHERE "user" = $n)`.
+    pub fn require_member_of(
+        mut self,
+        via: &str,
+        on: &str,
+        user_field: &str,
+        user_id: SqlValue,
+    ) -> Self {
+        self.member_in = Some(MemberInSubquery {
+            via: via.into(),
+            on: on.into(),
+            user_field: user_field.into(),
+            user_id,
+        });
+        self
     }
 
     pub fn before(mut self, field: &str, value: SqlValue) -> DataResult<Self> {
@@ -282,6 +311,18 @@ impl QueryBuilder {
                     where_parts.push(format!("{} {} ${idx}", q(&f.field), other.sql_op()));
                 }
             }
+        }
+
+        if let Some(m) = &self.member_in {
+            params.push(m.user_id.clone());
+            let idx = params.len();
+            where_parts.push(format!(
+                "{} IN (SELECT {} FROM {} WHERE {} = ${idx})",
+                q("id"),
+                q(&m.on),
+                q(&m.via),
+                q(&m.user_field),
+            ));
         }
 
         if let Some(cursor) = &self.cursor {

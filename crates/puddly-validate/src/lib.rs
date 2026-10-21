@@ -83,13 +83,19 @@ pub fn validate_app(root: &Path) -> (Option<AppIr>, Report, Vec<SourceFile>) {
         }
     }
 
+    let by_name: BTreeMap<String, &ParsedResource> =
+        parsed.iter().map(|r| (r.name.clone(), r)).collect();
+
+    for r in &parsed {
+        validate_one(r, &names, &by_name, &mut report);
+    }
+
     let mut resources = Vec::new();
     for r in parsed {
-        validate_one(&r, &names, &mut report);
         // Still emit IR for successfully shaped resources even if cross-file errors exist,
         // but only return AppIr when there are no errors.
         if r.access.is_some() {
-            resources.push(to_resource_ir(r));
+            resources.push(resolve_member_defaults(to_resource_ir(r)));
         }
     }
 
@@ -111,7 +117,12 @@ pub fn validate_app(root: &Path) -> (Option<AppIr>, Report, Vec<SourceFile>) {
     }
 }
 
-fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Report) {
+fn validate_one(
+    r: &ParsedResource,
+    known: &BTreeSet<String>,
+    by_name: &BTreeMap<String, &ParsedResource>,
+    report: &mut Report,
+) {
     // Reserved built-in RPC resource name
     if r.name == "auth" {
         report.push(
@@ -186,13 +197,11 @@ fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Repor
         }
     }
 
-    // Access rule field refs
+    // Access rule field refs + member join targets
     if let Some(access) = &r.access {
         for op in &access.operations {
             match &op.rule {
-                RuleIr::Owner { field, span } | RuleIr::Member { field, span }
-                    if !field_names.contains(field.as_str()) =>
-                {
+                RuleIr::Owner { field, span } if !field_names.contains(field.as_str()) => {
                     let suggestion = closest(field, field_names.iter().copied());
                     let mut d = Diagnostic::error(
                         ErrorCode::E0210,
@@ -208,6 +217,29 @@ fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Repor
                         );
                     }
                     report.push(d);
+                }
+                RuleIr::Member {
+                    via,
+                    on,
+                    user_field,
+                    span,
+                } => {
+                    if op.name == "create" {
+                        report.push(
+                            Diagnostic::error(
+                                ErrorCode::E0214,
+                                r.path.clone(),
+                                *span,
+                                "`rule.member` is not valid on `create`",
+                            )
+                            .with_suggestion(
+                                "use authenticated (or owner) on create; insert join rows separately",
+                                Some("create: rule.authenticated()".into()),
+                            )
+                            .with_root_id(format!("E0214:{}:create", r.name)),
+                        );
+                    }
+                    validate_member_join(r, op.name.as_str(), via, on, user_field, *span, by_name, report);
                 }
                 _ => {}
             }
@@ -285,9 +317,7 @@ fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Repor
         }
         if let Some(rule) = &action.access {
             match rule {
-                RuleIr::Owner { field, span } | RuleIr::Member { field, span }
-                    if !field_names.contains(field.as_str()) =>
-                {
+                RuleIr::Owner { field, span } if !field_names.contains(field.as_str()) => {
                     let suggestion = closest(field, field_names.iter().copied());
                     let mut d = Diagnostic::error(
                         ErrorCode::E0210,
@@ -310,6 +340,23 @@ fn validate_one(r: &ParsedResource, known: &BTreeSet<String>, report: &mut Repor
                     }
                     report.push(d);
                 }
+                RuleIr::Member {
+                    via,
+                    on,
+                    user_field,
+                    span,
+                } => {
+                    validate_member_join(
+                        r,
+                        &format!("action:{}", action.name),
+                        via,
+                        on,
+                        user_field,
+                        *span,
+                        by_name,
+                        report,
+                    );
+                }
                 _ => {}
             }
         }
@@ -329,6 +376,177 @@ fn to_resource_ir(r: ParsedResource) -> ResourceIr {
         constraints: r.constraints,
         access: r.access.expect("validated"),
         actions: r.actions,
+    }
+}
+
+/// Fill empty `on` / `user_field` with conventions (ADR-047).
+fn resolve_member_defaults(mut r: ResourceIr) -> ResourceIr {
+    let resource_name = r.name.clone();
+    let fix = |rule: &mut RuleIr| {
+        if let RuleIr::Member {
+            on, user_field, ..
+        } = rule
+        {
+            if on.is_empty() {
+                *on = resource_name.clone();
+            }
+            if user_field.is_empty() {
+                *user_field = "user".into();
+            }
+        }
+    };
+    for op in &mut r.access.operations {
+        fix(&mut op.rule);
+    }
+    for action in &mut r.actions {
+        if let Some(rule) = &mut action.access {
+            fix(rule);
+        }
+    }
+    r
+}
+
+fn member_on_user<'a>(
+    resource_name: &str,
+    on: &'a str,
+    user_field: &'a str,
+) -> (String, String) {
+    let on = if on.is_empty() {
+        resource_name.to_string()
+    } else {
+        on.to_string()
+    };
+    let user_field = if user_field.is_empty() {
+        "user".into()
+    } else {
+        user_field.to_string()
+    };
+    (on, user_field)
+}
+
+fn validate_member_join(
+    r: &ParsedResource,
+    op_label: &str,
+    via: &str,
+    on: &str,
+    user_field: &str,
+    span: Span,
+    by_name: &BTreeMap<String, &ParsedResource>,
+    report: &mut Report,
+) {
+    let Some(join) = by_name.get(via) else {
+        let suggestion = closest(via, by_name.keys().map(|s| s.as_str()));
+        let mut d = Diagnostic::error(
+            ErrorCode::E0213,
+            r.path.clone(),
+            span,
+            format!("`rule.member` join resource `{via}` is not declared"),
+        )
+        .with_root_id(format!("E0213:{}:{}:via:{}", r.name, op_label, via));
+        if let Some(s) = suggestion {
+            d = d.with_suggestion(
+                format!("did you mean `{s}`?"),
+                Some(format!("rule.member(\"{s}\")")),
+            );
+        } else {
+            d = d.with_suggestion(
+                "declare a join resource with refs to this resource and `user`",
+                None,
+            );
+        }
+        report.push(d);
+        return;
+    };
+
+    let (on, user_field) = member_on_user(&r.name, on, user_field);
+    let join_fields: BTreeMap<&str, &puddly_ir::FieldIr> =
+        join.fields.iter().map(|f| (f.name.as_str(), f)).collect();
+
+    match join_fields.get(on.as_str()) {
+        None => {
+            report.push(
+                Diagnostic::error(
+                    ErrorCode::E0213,
+                    r.path.clone(),
+                    span,
+                    format!(
+                        "`rule.member` column `{on}` not found on join resource `{via}`"
+                    ),
+                )
+                .with_suggestion(
+                    format!("add `{on}: field.ref(\"{}\")` on `{via}`", r.name),
+                    None,
+                )
+                .with_root_id(format!("E0213:{}:{}:on:{}", r.name, op_label, on)),
+            );
+        }
+        Some(f) => {
+            let ok = match &f.kind {
+                FieldKind::Ref { target } => target == &r.name,
+                FieldKind::Id => false,
+                _ => true, // uuid/text columns allowed but refs preferred
+            };
+            if let FieldKind::Ref { target } = &f.kind {
+                if target != &r.name {
+                    report.push(
+                        Diagnostic::error(
+                            ErrorCode::E0213,
+                            r.path.clone(),
+                            span,
+                            format!(
+                                "`rule.member` column `{on}` on `{via}` refs `{target}`, expected `{}`",
+                                r.name
+                            ),
+                        )
+                        .with_root_id(format!("E0213:{}:{}:on-target:{}", r.name, op_label, on)),
+                    );
+                }
+            }
+            let _ = ok;
+        }
+    }
+
+    match join_fields.get(user_field.as_str()) {
+        None => {
+            report.push(
+                Diagnostic::error(
+                    ErrorCode::E0213,
+                    r.path.clone(),
+                    span,
+                    format!(
+                        "`rule.member` column `{user_field}` not found on join resource `{via}`"
+                    ),
+                )
+                .with_suggestion(
+                    format!("add `{user_field}: field.ref(\"user\")` on `{via}`"),
+                    None,
+                )
+                .with_root_id(format!(
+                    "E0213:{}:{}:user:{}",
+                    r.name, op_label, user_field
+                )),
+            );
+        }
+        Some(f) => {
+            if let FieldKind::Ref { target } = &f.kind {
+                if target != "user" {
+                    report.push(
+                        Diagnostic::error(
+                            ErrorCode::E0213,
+                            r.path.clone(),
+                            span,
+                            format!(
+                                "`rule.member` column `{user_field}` on `{via}` refs `{target}`, expected `user`"
+                            ),
+                        )
+                        .with_root_id(format!(
+                            "E0213:{}:{}:user-target:{}",
+                            r.name, op_label, user_field
+                        )),
+                    );
+                }
+            }
+        }
     }
 }
 

@@ -97,6 +97,15 @@ pub struct ManifestRule {
     pub field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// Join resource for `member` (ADR-047).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    /// Join column → protected resource id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on: Option<String>,
+    /// Join column → user id (`user` key in TS; `userField` in JSON).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_field: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

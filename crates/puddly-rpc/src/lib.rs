@@ -25,7 +25,10 @@ mod row_decode;
 mod rs_rows;
 mod ts_client;
 
-pub use access_gate::{access_op_name, enforce, find_rule, require_rule, row_values_from_db};
+pub use access_gate::{
+    access_op_name, enforce, enforce_member, find_rule, list_owner_field, member_join,
+    require_rule, row_values_from_db, MemberJoin,
+};
 pub use action_db::CrudActionDbHost;
 pub use context::RpcContext;
 pub use csrf::check_csrf;

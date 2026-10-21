@@ -1,6 +1,8 @@
 //! Top-level RPC dispatch: CSRF → auth context → CRUD / auth / custom actions.
 
-use crate::access_gate::{enforce, list_owner_field, row_values_from_db};
+use crate::access_gate::{
+    enforce, enforce_member, list_owner_field, member_join, row_values_from_db,
+};
 use crate::action_db::CrudActionDbHost;
 use crate::auth_ops::handle_auth_op;
 use crate::context::RpcContext;
@@ -161,6 +163,31 @@ async fn enforce_action_access(
             Ok(())
         }
         Some(rule) => {
+            if let Some(join) = member_join(rule) {
+                if ctx.user.is_none() {
+                    return Err(RpcError::Unauthorized);
+                }
+                let id = body
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        RpcError::BadRequest(
+                            "id required in action input for owner/member access".into(),
+                        )
+                    })?;
+                // Ensure the row exists (same not_found behavior as owner path).
+                let stmt = book
+                    .get(&resource.name, PreparedKind::FindById)
+                    .ok_or_else(|| {
+                        RpcError::msg(format!("no find statement for {}", resource.name))
+                    })?;
+                let rows =
+                    query_prepared(exec, stmt, &[SqlValue::Uuid(id.to_string())]).await?;
+                if rows.is_empty() {
+                    return Err(RpcError::NotFound(format!("{} not found", resource.name)));
+                }
+                return enforce_member(&join, id, ctx.user.as_ref(), exec).await;
+            }
             let row_values = if list_owner_field(rule).is_some() {
                 // Auth first — avoid leaking existence via not_found to anonymous callers.
                 if ctx.user.is_none() {

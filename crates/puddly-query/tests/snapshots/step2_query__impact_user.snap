@@ -15,6 +15,11 @@ expression: render_json(&i)
     },
     {
       "kind": "referencedBy",
+      "from": "projectMember",
+      "to": "user"
+    },
+    {
+      "kind": "referencedBy",
       "from": "todo",
       "to": "user"
     }

@@ -197,16 +197,19 @@ fn access_rules_authenticated_owner_role_member() {
         AccessDecision::Deny
     );
 
+    // Member: sync check fails closed; join-table EXISTS is RPC (ADR-047).
     assert_eq!(
         check_rule(
             &RuleIr::Member {
                 span,
-                field: "org".into()
+                via: "projectMember".into(),
+                on: "project".into(),
+                user_field: "user".into(),
             },
             Some(&user),
             Some(&row)
         ),
-        AccessDecision::Allow
+        AccessDecision::Deny
     );
 
     // Empty rule list fails closed

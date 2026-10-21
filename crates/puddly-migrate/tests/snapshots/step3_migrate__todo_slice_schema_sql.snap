@@ -13,6 +13,14 @@ CREATE TABLE "project" (
   PRIMARY KEY ("id")
 );
 
+CREATE TABLE "projectMember" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "project" UUID NOT NULL,
+  "user" UUID NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY ("id")
+);
+
 CREATE TABLE "todo" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "title" VARCHAR(200) NOT NULL,
@@ -33,9 +41,12 @@ CREATE TABLE "user" (
 );
 
 ALTER TABLE "project" ADD CONSTRAINT "fk_project_owner" FOREIGN KEY ("owner") REFERENCES "user"("id");
+ALTER TABLE "projectMember" ADD CONSTRAINT "fk_projectMember_project" FOREIGN KEY ("project") REFERENCES "project"("id");
+ALTER TABLE "projectMember" ADD CONSTRAINT "fk_projectMember_user" FOREIGN KEY ("user") REFERENCES "user"("id");
 ALTER TABLE "todo" ADD CONSTRAINT "fk_todo_owner" FOREIGN KEY ("owner") REFERENCES "user"("id");
 ALTER TABLE "todo" ADD CONSTRAINT "fk_todo_project" FOREIGN KEY ("project") REFERENCES "project"("id");
 CREATE INDEX "idx_project_createdAt" ON "project" ("createdAt");
+CREATE INDEX "idx_projectMember_createdAt" ON "projectMember" ("createdAt");
 CREATE INDEX "idx_todo_createdAt" ON "todo" ("createdAt");
 CREATE INDEX "idx_todo_done" ON "todo" ("done");
 CREATE INDEX "idx_todo_dueDate" ON "todo" ("dueDate");

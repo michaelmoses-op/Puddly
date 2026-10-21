@@ -57,7 +57,9 @@ CSRF (`X-Puddly-CSRF`) and session cookies are sent automatically by `tools/pudd
 | `features/todos/todo.view.tsx` | Session-gated list + create form |
 | `features/todos/todo-row.island.tsx` | Toggle + Archive |
 | `features/todos/archive.action.ts` | Sidecar action uses `ctx.db.get`; RPC then `DELETE`s the row |
+| `features/projects/projectMember.resource.ts` | Join table for shared project access (`rule.member`) |
 | `migrations/0001_init.sql` | `user` / `project` / `todo` tables |
+| `migrations/0003_sync.sql` | `projectMember` join table |
 
 ## Developing Puddly itself
 

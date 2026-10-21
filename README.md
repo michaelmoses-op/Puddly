@@ -7,8 +7,8 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 27** — opt-in REST `/api/*` + OpenAPI (ADR-045); `puddly serve --rest`.
-Prior: Step 26 IR row decode in CRUD (ADR-044).
+**Build plan Step 29** — join-table `rule.member` (ADR-047). Prior: Step 28 action
+`ctx.db` (ADR-046); Step 27 opt-in REST + OpenAPI (ADR-045).
 
 ## Install the CLI
 
@@ -55,6 +55,7 @@ Custom actions run in a **long-lived** Node process speaking JSONL v2 on stdin/s
 | Default discovery | env → generated (walk-up) → `tools/puddly-action-sidecar.mjs` (walk-up) |
 | Convenience | `IpcActionRunner::node_sidecar` / `::generated_sidecar` |
 | Action `ctx` | `{ user, db }` — `ctx.db.*` reuses host CRUD/access (ADR-046) |
+| Access `member` | Join-table membership via `rule.member({ via, on?, user? })` (ADR-047) |
 | Env override | `PUDDLY_ACTION_SIDECAR` = space-separated argv |
 | Oneshot | `PUDDLY_ACTION_SIDECAR_ONESHOT=1` or `with_oneshot(true)` |
 | CLI | `puddly serve` / `puddly dev` (with DB) use long-lived worker when configured |
