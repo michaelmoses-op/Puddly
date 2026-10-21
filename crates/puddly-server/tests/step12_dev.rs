@@ -157,7 +157,13 @@ async fn ssr_overlay_with_session_and_canned_data() {
     row.insert("id", puddly_db::SqlValue::Uuid("t1".into()));
     row.insert("title", puddly_db::SqlValue::Text("Dev milk".into()));
     row.insert("done", puddly_db::SqlValue::Bool(true));
+    row.insert("dueDate", puddly_db::SqlValue::Null);
+    row.insert("project", puddly_db::SqlValue::Uuid("p1".into()));
     row.insert("owner", puddly_db::SqlValue::Uuid("owner-1".into()));
+    row.insert(
+        "createdAt",
+        puddly_db::SqlValue::Text("2026-01-01T00:00:00Z".into()),
+    );
     exec.push_canned(vec![row]);
 
     let mut headers = BTreeMap::new();

@@ -7,8 +7,8 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 25** — multi-instance SSE via Postgres LISTEN/NOTIFY (ADR-043 / ADR-010).
-Prior: Step 24 generated Rust row structs (ADR-042).
+**Build plan Step 26** — soft-plug IR row decode into CRUD list/get/include (ADR-044).
+Prior: Step 25 LISTEN/NOTIFY SSE fan-out (ADR-043).
 
 ## Try the todo slice
 

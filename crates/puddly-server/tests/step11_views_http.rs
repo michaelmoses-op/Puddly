@@ -57,7 +57,10 @@ async fn dispatch_get_v_todo_with_session_and_canned_rows() {
     row.insert("id", SqlValue::Uuid("t1".into()));
     row.insert("title", SqlValue::Text("Step11 milk".into()));
     row.insert("done", SqlValue::Bool(false));
+    row.insert("dueDate", SqlValue::Null);
+    row.insert("project", SqlValue::Uuid("p1".into()));
     row.insert("owner", SqlValue::Uuid("owner-1".into()));
+    row.insert("createdAt", SqlValue::Text("2026-01-01T00:00:00Z".into()));
     exec.push_canned(vec![row]);
 
     let views = ViewBundle::load(&example_root()).unwrap();

@@ -33,7 +33,10 @@ fn canned_todo_row(id: &str, title: &str) -> DbRow {
     row.insert("id", SqlValue::Uuid(id.into()));
     row.insert("title", SqlValue::Text(title.into()));
     row.insert("done", SqlValue::Bool(false));
+    row.insert("dueDate", SqlValue::Null);
+    row.insert("project", SqlValue::Uuid("p1".into()));
     row.insert("owner", SqlValue::Uuid("owner-1".into()));
+    row.insert("createdAt", SqlValue::Text("2026-01-01T00:00:00Z".into()));
     row
 }
 

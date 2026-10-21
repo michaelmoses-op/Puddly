@@ -4,6 +4,7 @@ use crate::access_gate::{enforce, list_owner_field, require_rule, row_values_fro
 use crate::context::RpcContext;
 use crate::error::{RpcError, RpcResult};
 use crate::list_body::apply_list_body;
+use crate::row_decode::{decode_row_to_json, decode_rows_to_json_vec, RowDecodeError};
 use futures::future::FutureExt;
 use puddly_auth::{generate_user_id, AuthUser};
 use puddly_data::{
@@ -63,7 +64,7 @@ async fn list(
         .build()
         .map_err(|e| RpcError::BadRequest(e.to_string()))?;
     let rows = exec.query(&page.sql, &page.params).await?;
-    let mut items = rows_to_json_vec(&rows);
+    let mut items = decode_rows_to_json_vec(resource, &rows)?;
     if !includes.is_empty() {
         attach_includes(resource, ir, book, &includes, &mut items, exec).await?;
     }
@@ -112,7 +113,7 @@ async fn attach_includes(
         if !ids.is_empty() {
             let related = batch_find_by_ids(target, book, &ids, exec).await?;
             for row in related {
-                let obj = row_to_json(&row);
+                let obj = decode_row_to_json(target, &row)?;
                 if let Some(id) = obj.get("id").and_then(json_id_str) {
                     by_id.insert(id, obj);
                 }
@@ -214,7 +215,7 @@ async fn get(
     let values = row_values_from_db(&row);
     let rule = require_rule(resource, "get")?;
     enforce(rule, ctx.user.as_ref(), Some(&values))?;
-    Ok(row_to_json(&row))
+    Ok(decode_row_to_json(resource, &row)?)
 }
 
 async fn create(
@@ -539,24 +540,9 @@ fn params_for_update(
     Ok(params)
 }
 
-fn row_to_json(row: &DbRow) -> Value {
-    let mut map = Map::new();
-    for (k, v) in &row.columns {
-        map.insert(k.clone(), sql_to_json(v));
-    }
-    Value::Object(map)
-}
-
-fn rows_to_json_vec(rows: &[DbRow]) -> Vec<Value> {
-    rows.iter().map(row_to_json).collect()
-}
-
-fn sql_to_json(v: &SqlValue) -> Value {
-    match v {
-        SqlValue::Null => Value::Null,
-        SqlValue::Bool(b) => Value::Bool(*b),
-        SqlValue::Int(i) => json!(i),
-        SqlValue::Float(f) => json!(f),
-        SqlValue::Text(s) | SqlValue::Uuid(s) => Value::String(s.clone()),
+impl From<RowDecodeError> for RpcError {
+    fn from(e: RowDecodeError) -> Self {
+        // Schema drift / driver mismatch — treat as internal failure.
+        RpcError::msg(format!("row decode: {e}"))
     }
 }

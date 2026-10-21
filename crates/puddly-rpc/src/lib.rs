@@ -16,6 +16,7 @@ mod dispatch;
 mod error;
 mod list_body;
 mod request;
+mod row_decode;
 mod rs_rows;
 mod ts_client;
 
@@ -25,6 +26,9 @@ pub use csrf::check_csrf;
 pub use dispatch::RpcRuntime;
 pub use error::{RpcError, RpcResult};
 pub use request::{RpcErrorBody, RpcRequest, RpcResponse, RpcTarget};
+pub use row_decode::{
+    decode_row_to_json, decode_rows_to_json_vec, row_to_json_raw, RowDecodeError,
+};
 pub use rs_rows::{generate_rs_rows, write_rs_rows, GENERATED_ROWS_RS};
 pub use ts_client::{generate_ts_client, write_ts_client, GENERATED_CLIENT_TS};
 

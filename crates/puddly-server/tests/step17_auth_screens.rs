@@ -124,7 +124,10 @@ async fn after_login_cookie_root_succeeds_with_recording_executor() {
     row.insert("id", SqlValue::Uuid("t17".into()));
     row.insert("title", SqlValue::Text("After login".into()));
     row.insert("done", SqlValue::Bool(false));
+    row.insert("dueDate", SqlValue::Null);
+    row.insert("project", SqlValue::Uuid("p17".into()));
     row.insert("owner", SqlValue::Uuid("owner-17".into()));
+    row.insert("createdAt", SqlValue::Text("2026-01-01T00:00:00Z".into()));
     exec.push_canned(vec![row]);
 
     let views = ViewBundle::load(&example_root()).unwrap();

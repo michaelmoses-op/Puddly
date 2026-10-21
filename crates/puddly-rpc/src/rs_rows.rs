@@ -1,6 +1,8 @@
 //! Generate typed Rust row structs from IR into `.puddly/generated/` (ADR-042 / Step 24).
 //!
 //! `DbRow` maps remain the executor boundary; generated structs decode above that layer.
+//! Runtime CRUD uses the same rules via [`crate::row_decode`] (ADR-044 / Step 26) without
+//! compiling this generated file into the framework binary.
 
 use puddly_ir::{AppIr, FieldIr, FieldKind, ResourceIr};
 use std::fs;
