@@ -4,19 +4,21 @@
 //! Step 9 executes them via the in-repo Node sidecar (`IpcActionRunner`) over
 //! the JSONL protocol. Step 10 makes [`ActionRunner`] async (ADR-028).
 //! Step 13: protocol v2 (`id`), long-lived worker, packaging B, frozen error codes
-//! (ADR-031).
+//! (ADR-031). Step 28: nested `ctx.db` via [`ActionDbHost`] (ADR-046).
 
+mod db_host;
 mod error;
 mod error_codes;
 mod ipc;
 mod load;
 mod package;
 
+pub use db_host::{ActionDbHost, MockActionDbHost};
 pub use error::{ActionError, ActionResult};
 pub use error_codes::IpcErrorCode;
 pub use ipc::{
-    find_generated_sidecar, find_sidecar_workspace, IpcActionRunner, IpcErrorBody, IpcId,
-    IpcRequest, IpcResponse, IpcUser, ACTION_SIDECAR_ENV, ACTION_SIDECAR_ONESHOT_ENV,
+    find_generated_sidecar, find_sidecar_workspace, IpcActionRunner, IpcDbRequest, IpcErrorBody,
+    IpcId, IpcRequest, IpcResponse, IpcUser, ACTION_SIDECAR_ENV, ACTION_SIDECAR_ONESHOT_ENV,
     DEFAULT_SIDECAR_SCRIPT, GENERATED_SIDECAR_SCRIPT, IPC_PROTOCOL_VERSION,
 };
 pub use load::{load_actions, ActionCatalog, LoadedAction};
@@ -29,7 +31,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Context passed into a native / pluggable action runner.
-#[derive(Debug, Clone)]
 pub struct ActionCall<'a> {
     pub resource: &'a str,
     pub action: &'a str,
@@ -40,6 +41,8 @@ pub struct ActionCall<'a> {
     pub source: &'a str,
     /// Authenticated user from RPC context (wired for IPC → sidecar `ctx.user`).
     pub user: Option<IpcUser>,
+    /// Nested DB host for sidecar `ctx.db.*` (ADR-046). Native/stub runners ignore this.
+    pub db_host: Option<&'a mut dyn ActionDbHost>,
 }
 
 /// Pluggable executor for custom actions (async; ADR-028).

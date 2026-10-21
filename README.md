@@ -54,6 +54,7 @@ Custom actions run in a **long-lived** Node process speaking JSONL v2 on stdin/s
 | Typed client | `puddly client generate` → `api.<resource>.<op>()` (ADR-038) |
 | Default discovery | env → generated (walk-up) → `tools/puddly-action-sidecar.mjs` (walk-up) |
 | Convenience | `IpcActionRunner::node_sidecar` / `::generated_sidecar` |
+| Action `ctx` | `{ user, db }` — `ctx.db.*` reuses host CRUD/access (ADR-046) |
 | Env override | `PUDDLY_ACTION_SIDECAR` = space-separated argv |
 | Oneshot | `PUDDLY_ACTION_SIDECAR_ONESHOT=1` or `with_oneshot(true)` |
 | CLI | `puddly serve` / `puddly dev` (with DB) use long-lived worker when configured |

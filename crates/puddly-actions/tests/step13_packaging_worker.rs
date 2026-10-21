@@ -2,7 +2,7 @@
 
 use puddly_actions::{
     find_generated_sidecar, package_action_sidecar, ActionCall, ActionRunner, IpcActionRunner,
-    IpcErrorCode, IpcId, IpcRequest, IpcResponse, IpcUser, ACTION_SIDECAR_ENV,
+    IpcErrorCode, IpcId, IpcRequest, IpcResponse, IpcUser, MockActionDbHost, ACTION_SIDECAR_ENV,
     GENERATED_SIDECAR_SCRIPT, IPC_PROTOCOL_VERSION,
 };
 use serde_json::json;
@@ -21,6 +21,21 @@ fn workspace_root() -> PathBuf {
 fn archive_path() -> PathBuf {
     workspace_root().join("examples/todo-slice/features/todos/archive.action.ts")
 }
+
+fn mock_db() -> MockActionDbHost {
+    MockActionDbHost::new(|method, resource, input| {
+        assert_eq!(method, "get");
+        assert_eq!(resource, "todo");
+        Ok(serde_json::json!({
+            "id": input["id"].clone(),
+            "title": "T",
+            "done": false,
+            "project": "p1",
+            "owner": "u",
+        }))
+    })
+}
+
 
 fn node_available() -> bool {
     Command::new("node")
@@ -49,6 +64,7 @@ fn protocol_v2_roundtrip_with_string_and_numeric_ids() {
             email: "e@e.co".into(),
             roles: vec![],
         }),
+        db_host: None,
     };
 
     for id in [
@@ -77,6 +93,9 @@ fn frozen_error_codes_match_sidecar_literals() {
         "no_run_export",
         "run_failed",
         "sidecar_not_configured",
+        "unauthorized",
+        "forbidden",
+        "db_failed",
     ];
     assert_eq!(IpcErrorCode::ALL.len(), expected.len());
     for (code, lit) in IpcErrorCode::ALL.iter().zip(expected) {
@@ -112,6 +131,7 @@ async fn long_lived_runner_reuses_process_for_two_archive_calls() {
         roles: vec![],
     };
 
+    let mut db = mock_db();
     let input1 = json!({"id": "a1"});
     let call1 = ActionCall {
         resource: "todo",
@@ -120,6 +140,7 @@ async fn long_lived_runner_reuses_process_for_two_archive_calls() {
         source_path: &path,
         source: &source,
         user: Some(user.clone()),
+        db_host: Some(&mut db),
     };
     let data1 = runner.run(call1).await.expect("first archive");
     assert_eq!(data1["archived"], "a1");
@@ -133,6 +154,7 @@ async fn long_lived_runner_reuses_process_for_two_archive_calls() {
         source_path: &path,
         source: &source,
         user: Some(user),
+        db_host: Some(&mut db),
     };
     let data2 = runner.run(call2).await.expect("second archive");
     assert_eq!(data2["archived"], "a2");
@@ -223,6 +245,7 @@ async fn oneshot_fallback_still_runs_archive() {
     let path = archive_path();
     let source = std::fs::read_to_string(&path).unwrap();
     let input = json!({"id": "oneshot-1"});
+    let mut db = mock_db();
     let call = ActionCall {
         resource: "todo",
         action: "archive",
@@ -230,6 +253,7 @@ async fn oneshot_fallback_still_runs_archive() {
         source_path: &path,
         source: &source,
         user: None,
+        db_host: Some(&mut db),
     };
     let data = runner.run(call).await.expect("oneshot");
     assert_eq!(data["archived"], "oneshot-1");

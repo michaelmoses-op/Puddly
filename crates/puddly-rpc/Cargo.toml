@@ -6,6 +6,7 @@ license.workspace = true
 description = "Puddly RPC skeleton: dispatch, CSRF, auth context, access enforcement"
 
 [dependencies]
+async-trait = { workspace = true }
 futures = { workspace = true }
 puddly-actions = { workspace = true }
 puddly-auth = { workspace = true }

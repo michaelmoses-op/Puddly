@@ -1,14 +1,17 @@
-//! Action IPC JSONL protocol + Node sidecar runner (Steps 8–13).
+//! Action IPC JSONL protocol + Node sidecar runner (Steps 8–13 / 28).
 //!
-//! Protocol v2 (ADR-031):
+//! Protocol v2 (ADR-031 / ADR-046):
 //! - Host and sidecar exchange JSONL on stdin/stdout.
 //! - Every request/response carries `id` (string or u64) for multiplexing.
 //! - Long-lived worker is the default; set `PUDDLY_ACTION_SIDECAR_ONESHOT=1`
 //!   for process-per-call.
+//! - Additive nested `op: "db"` from sidecar → host while a `run` is in flight
+//!   (action `ctx.db` helpers). Keep stdin open until the final `run` response.
 //!
 //! Sidecar template: `tools/puddly-action-sidecar.mjs`.
 //! Generated copy: `.puddly/generated/action-sidecar.mjs` (`puddly build`).
 
+use crate::db_host::ActionDbHost;
 use crate::error::{ActionError, ActionResult};
 use crate::error_codes::IpcErrorCode;
 use crate::{ActionCall, ActionRunner};
@@ -110,6 +113,30 @@ pub struct IpcResponse {
     pub data: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<IpcErrorBody>,
+}
+
+/// Nested DB request from sidecar → host during a `run` (ADR-046).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IpcDbRequest {
+    pub v: u32,
+    pub id: IpcId,
+    pub op: String,
+    pub method: String,
+    pub resource: String,
+    #[serde(default)]
+    pub input: Value,
+}
+
+impl IpcDbRequest {
+    pub fn decode_line(line: &str) -> Option<Self> {
+        let line = line.trim();
+        let v: Value = serde_json::from_str(line).ok()?;
+        if v.get("op").and_then(|o| o.as_str()) != Some("db") {
+            return None;
+        }
+        serde_json::from_value(v).ok()
+    }
 }
 
 impl IpcRequest {
@@ -336,6 +363,7 @@ impl IpcActionRunner {
         call_action: &str,
         call_path: &str,
         mut req: IpcRequest,
+        db_host: Option<&mut dyn ActionDbHost>,
     ) -> ActionResult<Value> {
         let id = IpcId::Num(1);
         req.id = id.clone();
@@ -354,40 +382,39 @@ impl IpcActionRunner {
             .spawn()
             .map_err(|e| ActionError::msg(format!("ipc spawn `{program}`: {e}")))?;
 
-        {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| ActionError::msg("ipc missing stdin"))?;
-            stdin
-                .write_all(line.as_bytes())
-                .await
-                .map_err(|e| ActionError::msg(format!("ipc write: {e}")))?;
-            // Drop stdin → EOF so oneshot sidecars can exit after one line.
-        }
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| ActionError::msg("ipc missing stdin"))?;
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| ActionError::msg(format!("ipc write: {e}")))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| ActionError::msg(format!("ipc flush: {e}")))?;
 
         let stdout = child
             .stdout
             .take()
             .ok_or_else(|| ActionError::msg("ipc missing stdout"))?;
         let mut reader = BufReader::new(stdout);
-        let mut out_line = String::new();
-        reader
-            .read_line(&mut out_line)
-            .await
-            .map_err(|e| ActionError::msg(format!("ipc read: {e}")))?;
 
+        // Keep stdin open for nested `op: "db"` round-trips (ADR-046), then EOF.
+        let result = drive_roundtrip(&mut stdin, &mut reader, &id, db_host).await;
+
+        drop(stdin);
         let status = child
             .wait()
             .await
             .map_err(|e| ActionError::msg(format!("ipc wait: {e}")))?;
-        if !status.success() {
+        if result.is_ok() && !status.success() {
             return Err(ActionError::msg(format!(
                 "ipc sidecar exited with {status} for `{call_resource}.{call_action}` ({call_path})"
             )));
         }
-
-        finish_response(&out_line, &id)
+        result
     }
 
     async fn ensure_worker(argv: &[String]) -> ActionResult<LiveWorker> {
@@ -424,6 +451,7 @@ impl IpcActionRunner {
     async fn run_live(
         worker: &mut LiveWorker,
         mut req: IpcRequest,
+        db_host: Option<&mut dyn ActionDbHost>,
     ) -> ActionResult<Value> {
         let id = IpcId::Num(worker.next_id);
         worker.next_id = worker.next_id.saturating_add(1);
@@ -441,50 +469,70 @@ impl IpcActionRunner {
             .await
             .map_err(|e| ActionError::msg(format!("ipc flush: {e}")))?;
 
-        // Sequential protocol under the mutex: read until matching id (skip noise).
-        loop {
-            let mut out_line = String::new();
-            let n = worker
-                .stdout
-                .read_line(&mut out_line)
-                .await
-                .map_err(|e| ActionError::msg(format!("ipc read: {e}")))?;
-            if n == 0 {
-                return Err(ActionError::msg("ipc sidecar closed stdout"));
-            }
-            let resp = IpcResponse::decode_line(&out_line)?;
-            if resp.id != id {
-                continue;
-            }
-            if resp.ok {
-                return Ok(resp.data.unwrap_or_else(|| json!({})));
-            }
-            let msg = resp
-                .error
-                .map(|e| format!("{}: {}", e.code, e.message))
-                .unwrap_or_else(|| "ipc error".into());
-            return Err(ActionError::msg(msg));
-        }
+        drive_roundtrip(&mut worker.stdin, &mut worker.stdout, &id, db_host).await
     }
 }
 
-fn finish_response(out_line: &str, expected_id: &IpcId) -> ActionResult<Value> {
-    let resp = IpcResponse::decode_line(out_line)?;
-    if &resp.id != expected_id {
-        return Err(ActionError::msg(format!(
-            "ipc id mismatch: got {}, expected {}",
-            resp.id.as_display(),
-            expected_id.as_display()
-        )));
-    }
-    if resp.ok {
-        Ok(resp.data.unwrap_or_else(|| json!({})))
-    } else {
+/// Read sidecar stdout until the final `run` response for `expected_id`.
+/// Nested `op: "db"` lines are answered on stdin via `db_host`.
+async fn drive_roundtrip(
+    stdin: &mut ChildStdin,
+    stdout: &mut BufReader<ChildStdout>,
+    expected_id: &IpcId,
+    mut db_host: Option<&mut dyn ActionDbHost>,
+) -> ActionResult<Value> {
+    loop {
+        let mut out_line = String::new();
+        let n = stdout
+            .read_line(&mut out_line)
+            .await
+            .map_err(|e| ActionError::msg(format!("ipc read: {e}")))?;
+        if n == 0 {
+            return Err(ActionError::msg("ipc sidecar closed stdout"));
+        }
+
+        if let Some(db_req) = IpcDbRequest::decode_line(&out_line) {
+            let resp = match db_host.as_mut() {
+                Some(host) => match host
+                    .db_op(&db_req.method, &db_req.resource, &db_req.input)
+                    .await
+                {
+                    Ok(data) => IpcResponse::ok_data(db_req.id, data),
+                    Err(ActionError::Db { code, message }) => {
+                        IpcResponse::err(db_req.id, code, message)
+                    }
+                    Err(e) => IpcResponse::err(db_req.id, IpcErrorCode::DbFailed, e.to_string()),
+                },
+                None => IpcResponse::err(
+                    db_req.id,
+                    IpcErrorCode::DbFailed,
+                    "no db host configured for this action call",
+                ),
+            };
+            let resp_line = resp.encode_line()?;
+            stdin
+                .write_all(resp_line.as_bytes())
+                .await
+                .map_err(|e| ActionError::msg(format!("ipc db reply write: {e}")))?;
+            stdin
+                .flush()
+                .await
+                .map_err(|e| ActionError::msg(format!("ipc db reply flush: {e}")))?;
+            continue;
+        }
+
+        let resp = IpcResponse::decode_line(&out_line)?;
+        if &resp.id != expected_id {
+            continue;
+        }
+        if resp.ok {
+            return Ok(resp.data.unwrap_or_else(|| json!({})));
+        }
         let msg = resp
             .error
             .map(|e| format!("{}: {}", e.code, e.message))
             .unwrap_or_else(|| "ipc error".into());
-        Err(ActionError::msg(msg))
+        return Err(ActionError::msg(msg));
     }
 }
 
@@ -534,6 +582,7 @@ impl ActionRunner for IpcActionRunner {
         let resource = call.resource;
         let action = call.action;
         let path = call.source_path.display().to_string();
+        let db_host = call.db_host;
 
         let Some(argv) = self.argv.clone() else {
             let _ = IpcResponse::err(
@@ -552,7 +601,7 @@ impl ActionRunner for IpcActionRunner {
         };
 
         if self.oneshot {
-            return Self::run_oneshot(&argv, resource, action, &path, req).await;
+            return Self::run_oneshot(&argv, resource, action, &path, req, db_host).await;
         }
 
         // Long-lived: take the worker out of the mutex (never hold std::sync::MutexGuard
@@ -571,7 +620,7 @@ impl ActionRunner for IpcActionRunner {
             None => Self::ensure_worker(&argv).await?,
         };
 
-        let result = Self::run_live(&mut worker, req).await;
+        let result = Self::run_live(&mut worker, req, db_host).await;
 
         // Put the worker back unless the session is dead.
         let restore = result.is_ok();
@@ -625,6 +674,7 @@ mod tests {
                 email: "a@b.co".into(),
                 roles: vec![],
             }),
+            db_host: None,
         };
         let req = IpcRequest::run_with_id(&call, IpcId::Str("req-1".into()));
         assert_eq!(req.v, 2);
