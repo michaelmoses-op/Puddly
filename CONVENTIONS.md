@@ -50,13 +50,17 @@ Short rules for apps (and for AI). Details live in gitignored `docs/` ADRs.
 ## Migrate & check
 
 - `puddly check` — parse/validate resources.
-- `puddly migrate generate` / `check` / `apply` — SQL under `migrations/`.
+- `puddly migrate` — apply pending SQL (default). Also `migrate generate` / `check` / `apply`.
 - Never auto-migrate on startup; `puddly dev` only hints.
 
 ## Dev & build
 
-- `puddly dev` — watch, SSR, `/__dev`; needs `DATABASE_URL` for DB loads.
+- Install CLI once: `./install.sh` or `cargo install --path crates/puddly-cli` (see repo README).
+- App cwd defaults: when cwd (or a parent) has `features/`, `.puddly/`, or `puddly.toml`, omit app-path args.
+- `puddly install` — Node 22+ doctor, then same packaging as `build`.
 - `puddly build` — package sidecar + typed TS client + Rust rows into `.puddly/generated/`.
+- `puddly up` — migrate apply → build → `dev` (or `--serve`).
+- `puddly dev` — watch, SSR, `/__dev`; needs `DATABASE_URL` for DB loads.
 - `puddly client generate` — TS client + Rust `rows.rs` (DbRow maps remain at the executor).
 - `puddly init [path]` — scaffold a minimal app (this file + sample resource).
 - `puddly init --docker` — also write Dockerfile + compose (migrate apply is a one-shot, never on serve start).

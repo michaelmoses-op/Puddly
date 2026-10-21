@@ -4,36 +4,36 @@ Clickable vertical slice: **sign up → see list → create todo → toggle/arch
 
 ## Prerequisites
 
-- **Rust** (stable toolchain; workspace builds with Cargo)
+- **`puddly` on PATH** — from the repo: `./install.sh` or `cargo install --path crates/puddly-cli --locked --force`
 - **Node.js 22+** (custom actions use `--experimental-strip-types`)
 - **Postgres** with a database you can write to
 - **`DATABASE_URL`** — e.g. `postgres://puddly:puddly@127.0.0.1:5432/puddly`
 
 Auth account/session tables are opt-in: write the scaffold SQL once, then apply it
-(`puddly auth scaffold` → review → apply with your usual migrate/SQL path).
+(`puddly auth scaffold` → review → `puddly migrate`).
 
 ## Runbook
 
-From the **repo root**:
+From **this directory** (`examples/todo-slice`):
 
 ```bash
-# 1) Apply example migrations (needs DATABASE_URL)
 export DATABASE_URL=postgres://USER:PASS@127.0.0.1:5432/DB
-cargo run -p puddly-cli -- migrate apply examples/todo-slice
 
-# Auth DDL once per database (writes a migration file under the app):
-cargo run -p puddly-cli -- auth scaffold examples/todo-slice
-# Then apply that new migration the same way (migrate apply / psql).
+puddly install   # or: puddly build
+puddly migrate   # apply pending SQL (also: migrate generate|check|apply)
+puddly dev       # or: puddly serve
 
-# 2) Package action sidecar + typed client into .puddly/generated/
-cargo run -p puddly-cli -- build examples/todo-slice
-# Or client only: cargo run -p puddly-cli -- client generate examples/todo-slice
-# See client/ for a committed snapshot of the generated API shape.
+# demo one-shot (migrate + build + dev):
+# puddly up
+```
 
-# 3) Serve (or use `dev` for hot reload)
-cargo run -p puddly-cli -- serve examples/todo-slice --bind 127.0.0.1:3000
-# Dev alternative:
-# cargo run -p puddly-cli -- dev examples/todo-slice --bind 127.0.0.1:3000
+App-path args are optional when cwd (or a parent) is the app (`features/`, `.puddly/`).
+
+Auth DDL once per database:
+
+```bash
+puddly auth scaffold
+puddly migrate
 ```
 
 Open the app:
@@ -58,6 +58,17 @@ CSRF (`X-Puddly-CSRF`) and session cookies are sent automatically by `tools/pudd
 | `features/todos/todo-row.island.tsx` | Toggle + Archive |
 | `features/todos/archive.action.ts` | Sidecar action; RPC then `DELETE`s the row |
 | `migrations/0001_init.sql` | `user` / `project` / `todo` tables |
+
+## Developing Puddly itself
+
+Framework contributors iterating in-tree can still invoke the CLI via Cargo from the **repo root**:
+
+```bash
+cargo run -p puddly-cli -- check examples/todo-slice
+cargo run -p puddly-cli -- migrate apply examples/todo-slice
+cargo run -p puddly-cli -- build examples/todo-slice
+cargo run -p puddly-cli -- serve examples/todo-slice --bind 127.0.0.1:3000
+```
 
 ## Tests
 
