@@ -7,9 +7,8 @@ Display name and CLI binary are defined in one place:
 
 ## Status
 
-**Build plan Step 23** — production hardening (ADR-041): graceful SSE drain, `/health` +
-`/ready` + `/metrics`, startup env validation, `puddly init --docker`. Prior: Step 22 SSE /
-`live: true` (ADR-040). Next post-MVP: generated row/client structs.
+**Build plan Step 24** — generated Rust row structs (ADR-042) into `.puddly/generated/rows.rs`
+(`puddly build` / `client generate`). Prior: Step 23 prod hardening (ADR-041).
 
 ## Try the todo slice
 

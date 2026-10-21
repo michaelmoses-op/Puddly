@@ -18,7 +18,9 @@ use puddly_query::{
     format_impact, format_inspect, impact, inspect, QueryTarget,
 };
 use puddly_actions::{package_action_sidecar, ACTION_SIDECAR_ENV, GENERATED_SIDECAR_SCRIPT};
-use puddly_rpc::{write_ts_client, RpcServer, GENERATED_CLIENT_TS};
+use puddly_rpc::{
+    write_rs_rows, write_ts_client, RpcServer, GENERATED_CLIENT_TS, GENERATED_ROWS_RS,
+};
 use puddly_server::{
     errors_from_check, resolve_serve_env, serve, serve_dev, watch_dev_loop, DeployEnv,
     DevHandles, DevState, ServerConfig,
@@ -116,13 +118,13 @@ enum Commands {
         #[arg(long)]
         secure_cookies: bool,
     },
-    /// Package action sidecar + typed TS client into `.puddly/generated/` (ADR-031 / ADR-038)
+    /// Package sidecar + typed TS client + Rust rows into `.puddly/generated/` (ADR-031 / 038 / 042)
     Build {
         /// App root (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Typed TypeScript RPC client (ADR-038 / Step 20)
+    /// Typed TypeScript RPC client + Rust row structs (ADR-038 / ADR-042)
     Client {
         #[command(subcommand)]
         command: ClientCmd,
@@ -195,7 +197,7 @@ enum AuthCmd {
 
 #[derive(Subcommand, Debug)]
 enum ClientCmd {
-    /// Write `.puddly/generated/client.ts` from the app IR
+    /// Write `.puddly/generated/client.ts` + `rows.rs` from the app IR
     Generate {
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -632,10 +634,22 @@ async fn main() -> ExitCode {
                         "{DISPLAY_NAME} build: wrote {} ({GENERATED_CLIENT_TS})",
                         dest.display()
                     );
-                    ExitCode::SUCCESS
                 }
                 Err(e) => {
                     eprintln!("error: write client: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+            match write_rs_rows(&path, &ir) {
+                Ok(dest) => {
+                    println!(
+                        "{DISPLAY_NAME} build: wrote {} ({GENERATED_ROWS_RS})",
+                        dest.display()
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: write rows: {e}");
                     ExitCode::from(1)
                 }
             }
@@ -648,10 +662,19 @@ async fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
                 let ir = result.ir.expect("ok implies ir");
-                match write_ts_client(&path, &ir) {
+                if let Err(e) = write_ts_client(&path, &ir) {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(1);
+                } else {
+                    println!(
+                        "{DISPLAY_NAME} client: wrote {} ({GENERATED_CLIENT_TS})",
+                        path.join(GENERATED_CLIENT_TS).display()
+                    );
+                }
+                match write_rs_rows(&path, &ir) {
                     Ok(dest) => {
                         println!(
-                            "{DISPLAY_NAME} client: wrote {} ({GENERATED_CLIENT_TS})",
+                            "{DISPLAY_NAME} client: wrote {} ({GENERATED_ROWS_RS})",
                             dest.display()
                         );
                         ExitCode::SUCCESS

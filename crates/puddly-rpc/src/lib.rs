@@ -16,6 +16,7 @@ mod dispatch;
 mod error;
 mod list_body;
 mod request;
+mod rs_rows;
 mod ts_client;
 
 pub use access_gate::{access_op_name, enforce, find_rule, require_rule, row_values_from_db};
@@ -24,6 +25,7 @@ pub use csrf::check_csrf;
 pub use dispatch::RpcRuntime;
 pub use error::{RpcError, RpcResult};
 pub use request::{RpcErrorBody, RpcRequest, RpcResponse, RpcTarget};
+pub use rs_rows::{generate_rs_rows, write_rs_rows, GENERATED_ROWS_RS};
 pub use ts_client::{generate_ts_client, write_ts_client, GENERATED_CLIENT_TS};
 
 use puddly_actions::{
