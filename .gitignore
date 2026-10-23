@@ -12,4 +12,6 @@ docs/
 **/.puddly/cache/
 **/.puddly/generated/
 **/node_modules/
+packages/puddly/vendor/
+packages/puddly/*.tgz
 .DS_Store
