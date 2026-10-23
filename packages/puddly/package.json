@@ -1,0 +1,36 @@
+{
+  "name": "puddly",
+  "version": "0.1.0",
+  "description": "Puddly CLI — server-first web framework. Thin npm wrapper; downloads a prebuilt binary (does not compile Rust).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelmoses-op/Puddly.git",
+    "directory": "packages/puddly"
+  },
+  "homepage": "https://github.com/michaelmoses-op/Puddly#readme",
+  "bugs": {
+    "url": "https://github.com/michaelmoses-op/Puddly/issues"
+  },
+  "keywords": [
+    "puddly",
+    "cli",
+    "framework",
+    "server-first"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "puddly": "bin/puddly.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "prepack": "node -e \"require('fs').accessSync('package.json')\""
+  }
+}

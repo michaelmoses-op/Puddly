@@ -1,0 +1,141 @@
+# Build prebuilt `puddly` binaries and attach them to a GitHub Release.
+# Triggers: tag `v*` (e.g. v0.1.0) or workflow_dispatch.
+#
+# Published targets (when runners are available):
+#   - x86_64-unknown-linux-gnu   (ubuntu-latest)
+#   - aarch64-apple-darwin       (macos-latest)
+#   - x86_64-apple-darwin        (macos-13)
+#
+# Asset names: puddly-<version>-<target>.tar.gz  (contains binary `puddly`)
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v0.1.0). Empty = run id only (artifacts, no Release)."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build -p puddly-cli --release --locked --target ${{ matrix.target }}
+
+      - name: Package tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME:-}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
+            VERSION="${{ inputs.tag }}"
+          fi
+          VERSION="${VERSION#v}"
+          if [[ -z "$VERSION" || "$VERSION" == *"/"* ]]; then
+            VERSION="0.0.0-dev.${GITHUB_RUN_ID}"
+          fi
+          TARGET="${{ matrix.target }}"
+          BIN="target/${TARGET}/release/puddly"
+          test -x "$BIN"
+          STAGE="puddly-${VERSION}-${TARGET}"
+          mkdir -p "dist/${STAGE}"
+          cp "$BIN" "dist/${STAGE}/puddly"
+          tar -C "dist/${STAGE}" -czf "dist/${STAGE}.tar.gz" puddly
+          # checksum next to the archive (for install.sh / npm verify)
+          (cd dist && sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256" || shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256")
+          echo "Packed dist/${STAGE}.tar.gz (version=${VERSION})"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puddly-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: puddly-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create or update GitHub Release
+        if: >-
+          startsWith(github.ref, 'refs/tags/v') ||
+          (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG="${TAG#refs/tags/}"
+          test -n "$TAG"
+          NOTES="$(mktemp)"
+          cat > "$NOTES" <<'EOF'
+          ## Puddly CLI
+
+          Prebuilt `puddly` binaries (no Rust required for app authors).
+
+          | Target | Notes |
+          | --- | --- |
+          | `x86_64-unknown-linux-gnu` | Linux x64 |
+          | `aarch64-apple-darwin` | macOS Apple Silicon |
+          | `x86_64-apple-darwin` | macOS Intel |
+
+          Install:
+
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/michaelmoses-op/Puddly/main/install.sh | bash
+          # or: npm i -g puddly   (after npm publish — see packages/puddly)
+          ```
+          EOF
+          # Tag must already exist on the remote (push a `v*` tag, or create it before dispatch).
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.sha256 --clobber
+          else
+            gh release create "$TAG" artifacts/*.tar.gz artifacts/*.sha256 \
+              --title "Puddly ${TAG}" \
+              --notes-file "$NOTES"
+          fi

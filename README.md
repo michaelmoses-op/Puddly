@@ -10,32 +10,24 @@ Display name and CLI binary are defined in one place:
 **Build plan Step 31** — IPC / action errors → HTTP status (ADR-049). Prior: Step 30
 CSRF double-submit (ADR-048); Step 29 `rule.member` (ADR-047).
 
-## Install the CLI
+## For app authors
 
-One-time (needs [Rust/Cargo](https://rustup.rs)):
-
-```bash
-# from a clone
-./install.sh
-# or: cargo install --path crates/puddly-cli --locked --force
-
-# or without cloning first
-curl -fsSL https://raw.githubusercontent.com/michaelmoses-op/Puddly/main/install.sh | bash
-```
-
-That puts `puddly` on PATH (usually `~/.cargo/bin`). App authors use short `puddly …` commands after that — no daily `cargo run`.
-
-## Quick start (app authors)
+Needs **Node 22+**. Rust is only required if you use the Cargo fallback (no Release binary yet).
 
 ```bash
-cd my-app   # or examples/todo-slice
-puddly install   # Node 22+ doctor + build (sidecar, client, rows)
-# or: puddly build
-export DATABASE_URL=postgres://USER:PASS@127.0.0.1:5432/DB
-puddly migrate   # apply (also: migrate generate|check|apply)
-puddly dev       # or: puddly serve
-# demo one-shot: puddly up
+# pick one:
+npm i -g puddly
+# OR: curl -fsSL https://raw.githubusercontent.com/michaelmoses-op/Puddly/main/install.sh | bash
+# OR: npx puddly …
+
+puddly init
+# DATABASE_URL=postgres://USER:PASS@127.0.0.1:5432/DB
+puddly install && puddly migrate && puddly dev
 ```
+
+- **`npm i -g puddly`** — thin wrapper ([`packages/puddly`](packages/puddly)); `postinstall` downloads a **prebuilt** GitHub Release binary (does **not** compile Rust). Until the package is on the public registry, use `npm i -g ./packages/puddly` from a checkout, or `npm pack` + install the tarball (see package README).
+- **`install.sh`** — prefers the latest Release asset for your OS/arch; falls back to `cargo install --git` only if no matching asset exists.
+- **Published targets** (Release workflow): Linux x64, macOS aarch64, macOS x64.
 
 When your cwd is an app (`features/`, `.puddly/`, or `puddly.toml`), app-path args are optional — `puddly` walks up from cwd to find the app root.
 
@@ -67,6 +59,9 @@ Requires Node 22+ (`--experimental-strip-types` for `*.action.ts` imports).
 Framework contributors work in this Cargo workspace. Prefer the installed `puddly` binary for app commands; use Cargo when iterating on the CLI/crates:
 
 ```bash
+git clone https://github.com/michaelmoses-op/Puddly.git
+cd Puddly
+./install.sh                    # or: cargo install --path crates/puddly-cli --locked --force
 cargo run -p puddly-cli -- check examples/todo-slice
 cargo run -p puddly-cli -- explain E0212
 cargo run -p puddly-cli -- init ./my-app
@@ -74,6 +69,13 @@ cargo test --workspace
 ```
 
 Re-install after CLI changes: `./install.sh` or `cargo install --path crates/puddly-cli --locked --force`.
+
+Force Cargo even when Releases exist: `PUDDLY_FORCE_CARGO=1 ./install.sh`.
+
+### Releases & npm
+
+- Tag `v*` (e.g. `v0.1.0`) → [`.github/workflows/release.yml`](.github/workflows/release.yml) builds and uploads tarballs.
+- npm package lives in [`packages/puddly`](packages/puddly). Publishing to the public registry needs an owner `NPM_TOKEN` (see that package’s README / PR notes).
 
 ## Workspace
 
@@ -97,12 +99,13 @@ crates/
   puddly-server/       # async HTTP + SSR GETs + puddly dev (watcher, /__dev, overlay)
   puddly-views/        # *.view.tsx / *.island.tsx discover + Oxc compile + SSR
   puddly-cli/          # `puddly` binary
+packages/puddly/       # npm thin wrapper (downloads Release binary)
 examples/todo-slice/   # sample app + manifest + migrations + todo view/island
 tools/                 # action sidecar + puddly-islands.js (hydrate + RPC mutations)
 tests/fixtures/        # invalid fixtures per error code
-install.sh             # cargo-install the puddly CLI onto PATH
+install.sh             # Release binary preferred; Cargo fallback
 ```
 
-CI sketch: [`.github/workflows/puddly-check.yml`](.github/workflows/puddly-check.yml).
+CI: [`.github/workflows/puddly-check.yml`](.github/workflows/puddly-check.yml) · Releases: [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 Design docs live under `docs/` locally (gitignored).

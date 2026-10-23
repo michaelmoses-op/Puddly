@@ -58,7 +58,7 @@ Short rules for apps (and for AI). Details live in gitignored `docs/` ADRs.
 
 ## Dev & build
 
-- Install CLI once: `./install.sh` or `cargo install --path crates/puddly-cli` (see repo README).
+- Install CLI once: `npm i -g puddly` / `install.sh` (Release binary) or `cargo install --path crates/puddly-cli` (see repo README).
 - App cwd defaults: when cwd (or a parent) has `features/`, `.puddly/`, or `puddly.toml`, omit app-path args.
 - `puddly install` — Node 22+ doctor, then same packaging as `build`.
 - `puddly build` — package sidecar + typed TS client + Rust rows into `.puddly/generated/`.

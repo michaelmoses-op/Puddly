@@ -26,3 +26,18 @@ jobs:
         run: cargo run -p puddly-cli -- migrate check examples/todo-slice
       - name: Unit / integration tests
         run: cargo test --workspace
+      - name: Build release binary (npm pack smoke)
+        run: cargo build -p puddly-cli --release --locked
+      - name: npm pack + local install smoke
+        working-directory: packages/puddly
+        run: |
+          set -euo pipefail
+          PUDDLY_BINARY="${GITHUB_WORKSPACE}/target/release/puddly" npm pack
+          TARBALL="$(ls -1 puddly-*.tgz | head -n1)"
+          test -n "$TARBALL"
+          # Install into a throwaway prefix; postinstall copies PUDDLY_BINARY → vendor/
+          PREFIX="$(mktemp -d)"
+          npm install -g --prefix "$PREFIX" "./${TARBALL}"
+          export PATH="${PREFIX}/bin:${PATH}"
+          puddly --version
+          test -x "${PREFIX}/lib/node_modules/puddly/vendor/puddly"
