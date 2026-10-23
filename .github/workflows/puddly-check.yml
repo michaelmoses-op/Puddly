@@ -30,9 +30,13 @@ jobs:
         run: cargo build -p puddly-cli --release --locked
       - name: npm pack + local install smoke
         working-directory: packages/puddly
+        env:
+          # Must be set for `npm install` (postinstall), not only `npm pack`.
+          PUDDLY_BINARY: ${{ github.workspace }}/target/release/puddly
         run: |
           set -euo pipefail
-          PUDDLY_BINARY="${GITHUB_WORKSPACE}/target/release/puddly" npm pack
+          test -x "$PUDDLY_BINARY"
+          npm pack
           TARBALL="$(ls -1 puddly-*.tgz | head -n1)"
           test -n "$TARBALL"
           # Install into a throwaway prefix; postinstall copies PUDDLY_BINARY → vendor/
